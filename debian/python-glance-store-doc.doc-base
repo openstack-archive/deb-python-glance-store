@@ -1,0 +1,9 @@
+Document: python-glance-store-doc
+Title: glance_store Documentation
+Author: N/A
+Abstract: Sphinx documentation for glance_store
+Section: Programming/Python
+
+Format: HTML
+Index: /usr/share/doc/python-glance-store-doc/html/index.html
+Files: /usr/share/doc/python-glance-store-doc/html/*
