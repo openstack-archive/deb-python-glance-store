@@ -349,6 +349,8 @@ def Store(conf):
         return MultiTenantStore(conf)
     return SingleTenantStore(conf)
 
+Store.OPTIONS = _SWIFT_OPTS
+
 
 class BaseStore(driver.Store):
 
@@ -401,7 +403,7 @@ class BaseStore(driver.Store):
             reason = (_("Location credentials are invalid"))
             raise exceptions.BadStoreUri(message=reason)
 
-    def get(self, location, connection=None, context=None):
+    def get(self, location, connection=None, offset=0, chunk_size=None, context=None):
         location = location.store_location
         (resp_headers, resp_body) = self._get_object(location, connection,
                                                      context=context)
