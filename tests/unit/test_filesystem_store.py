@@ -21,17 +21,18 @@ import hashlib
 import json
 import mock
 import os
+import stat
 import StringIO
 import uuid
 
 import fixtures
+from oslo.utils import units
 import six
 
 from glance_store._drivers.filesystem import ChunkedFile
 from glance_store._drivers.filesystem import Store
 from glance_store import exceptions
-from glance_store.location import get_location_from_uri
-from glance_store.openstack.common import units
+from glance_store import location
 from glance_store.tests import base
 
 
@@ -62,13 +63,13 @@ class TestStore(base.StoreBaseTest):
         file_contents = "chunk00000remainder"
         image_file = StringIO.StringIO(file_contents)
 
-        location, size, checksum, _ = self.store.add(image_id,
-                                                     image_file,
-                                                     len(file_contents))
+        loc, size, checksum, _ = self.store.add(image_id,
+                                                image_file,
+                                                len(file_contents))
 
         # Now read it back...
         uri = "file:///%s/%s" % (self.test_dir, image_id)
-        loc = get_location_from_uri(uri)
+        loc = location.get_location_from_uri(uri, conf=self.conf)
         (image_file, image_size) = self.store.get(loc)
 
         expected_data = "chunk00000remainder"
@@ -89,13 +90,13 @@ class TestStore(base.StoreBaseTest):
         file_contents = "chunk00000remainder"
         image_file = StringIO.StringIO(file_contents)
 
-        location, size, checksum, _ = self.store.add(image_id,
-                                                     image_file,
-                                                     len(file_contents))
+        loc, size, checksum, _ = self.store.add(image_id,
+                                                image_file,
+                                                len(file_contents))
 
         # Now read it back...
         uri = "file:///%s/%s" % (self.test_dir, image_id)
-        loc = get_location_from_uri(uri)
+        loc = location.get_location_from_uri(uri, conf=self.conf)
 
         data = ""
         for offset in range(len(file_contents)):
@@ -108,26 +109,29 @@ class TestStore(base.StoreBaseTest):
         self.assertEqual(data, file_contents)
 
         data = ""
+        chunk_size = 5
         (image_file, image_size) = self.store.get(loc,
-                                                  offset=5,
-                                                  chunk_size=5)
+                                                  offset=chunk_size,
+                                                  chunk_size=chunk_size)
         for chunk in image_file:
             data += chunk
 
         self.assertEqual(data, '00000')
+        self.assertEqual(image_size, chunk_size)
 
     def test_get_non_existing(self):
         """
         Test that trying to retrieve a file that doesn't exist
         raises an error
         """
-        loc = get_location_from_uri("file:///%s/non-existing" % self.test_dir)
+        loc = location.get_location_from_uri(
+            "file:///%s/non-existing" % self.test_dir, conf=self.conf)
         self.assertRaises(exceptions.NotFound,
                           self.store.get,
                           loc)
 
     def test_add(self):
-        """Test that we can add an image via the filesystem backend"""
+        """Test that we can add an image via the filesystem backend."""
         ChunkedFile.CHUNKSIZE = 1024
         expected_image_id = str(uuid.uuid4())
         expected_file_size = 5 * KB  # 5K
@@ -137,16 +141,16 @@ class TestStore(base.StoreBaseTest):
                                               expected_image_id)
         image_file = StringIO.StringIO(expected_file_contents)
 
-        location, size, checksum, _ = self.store.add(expected_image_id,
-                                                     image_file,
-                                                     expected_file_size)
+        loc, size, checksum, _ = self.store.add(expected_image_id,
+                                                image_file,
+                                                expected_file_size)
 
-        self.assertEqual(expected_location, location)
+        self.assertEqual(expected_location, loc)
         self.assertEqual(expected_file_size, size)
         self.assertEqual(expected_checksum, checksum)
 
         uri = "file:///%s/%s" % (self.test_dir, expected_image_id)
-        loc = get_location_from_uri(uri)
+        loc = location.get_location_from_uri(uri, conf=self.conf)
         (new_image_file, new_image_size) = self.store.get(loc)
         new_image_contents = ""
         new_image_file_size = 0
@@ -314,13 +318,13 @@ class TestStore(base.StoreBaseTest):
         file_contents = "*" * file_size
         image_file = StringIO.StringIO(file_contents)
 
-        location, size, checksum, _ = self.store.add(image_id,
-                                                     image_file,
-                                                     file_size)
+        loc, size, checksum, _ = self.store.add(image_id,
+                                                image_file,
+                                                file_size)
 
         # Now check that we can delete it
         uri = "file:///%s/%s" % (self.test_dir, image_id)
-        loc = get_location_from_uri(uri)
+        loc = location.get_location_from_uri(uri, conf=self.conf)
         self.store.delete(loc)
 
         self.assertRaises(exceptions.NotFound, self.store.get, loc)
@@ -330,7 +334,8 @@ class TestStore(base.StoreBaseTest):
         Test that trying to delete a file that doesn't exist
         raises an error
         """
-        loc = get_location_from_uri("file:///tmp/glance-tests/non-existing")
+        loc = location.get_location_from_uri(
+            "file:///tmp/glance-tests/non-existing", conf=self.conf)
         self.assertRaises(exceptions.NotFound,
                           self.store.delete,
                           loc)
@@ -395,15 +400,16 @@ class TestStore(base.StoreBaseTest):
                                               expected_image_id)
         image_file = six.StringIO(expected_file_contents)
 
-        location, size, checksum, _ = self.store.add(expected_image_id,
-                                                     image_file,
-                                                     expected_file_size)
+        loc, size, checksum, _ = self.store.add(expected_image_id,
+                                                image_file,
+                                                expected_file_size)
 
-        self.assertEqual(expected_location, location)
+        self.assertEqual(expected_location, loc)
         self.assertEqual(expected_file_size, size)
         self.assertEqual(expected_checksum, checksum)
 
-        loc = get_location_from_uri(expected_location)
+        loc = location.get_location_from_uri(expected_location,
+                                             conf=self.conf)
         (new_image_file, new_image_size) = self.store.get(loc)
         new_image_contents = ""
         new_image_file_size = 0
@@ -446,3 +452,111 @@ class TestStore(base.StoreBaseTest):
             self.assertRaises(exceptions.StorageFull, self.store.add,
                               expected_image_id, image_file,
                               expected_file_size)
+
+    def test_configure_add_with_file_perm(self):
+        """
+        Tests filesystem specified by filesystem_store_file_perm
+        are parsed correctly.
+        """
+        store = self.useFixture(fixtures.TempDir()).path
+        self.conf.set_override('filesystem_store_datadir', store,
+                               group='glance_store')
+        self.conf.set_override('filesystem_store_file_perm', 700,  # -rwx------
+                               group='glance_store')
+        self.store.configure_add()
+        self.assertEqual(self.store.datadir, store)
+
+    def test_configure_add_with_unaccessible_file_perm(self):
+        """
+        Tests BadStoreConfiguration exception is raised if an invalid
+        file permission specified in filesystem_store_file_perm.
+        """
+        store = self.useFixture(fixtures.TempDir()).path
+        self.conf.set_override('filesystem_store_datadir', store,
+                               group='glance_store')
+        self.conf.set_override('filesystem_store_file_perm', 7,  # -------rwx
+                               group='glance_store')
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store.configure_add)
+
+    def test_add_with_file_perm_for_group_other_users_access(self):
+        """
+        Test that we can add an image via the filesystem backend with a
+        required image file permission.
+        """
+        store = self.useFixture(fixtures.TempDir()).path
+        self.conf.set_override('filesystem_store_datadir', store,
+                               group='glance_store')
+        self.conf.set_override('filesystem_store_file_perm', 744,  # -rwxr--r--
+                               group='glance_store')
+
+        # -rwx------
+        os.chmod(store, 0o700)
+        self.assertEqual(0o700, stat.S_IMODE(os.stat(store)[stat.ST_MODE]))
+
+        self.store.configure_add()
+
+        Store.WRITE_CHUNKSIZE = 1024
+        expected_image_id = str(uuid.uuid4())
+        expected_file_size = 5 * units.Ki  # 5K
+        expected_file_contents = "*" * expected_file_size
+        expected_checksum = hashlib.md5(expected_file_contents).hexdigest()
+        expected_location = "file://%s/%s" % (store,
+                                              expected_image_id)
+        image_file = six.StringIO(expected_file_contents)
+
+        location, size, checksum, _ = self.store.add(expected_image_id,
+                                                     image_file,
+                                                     expected_file_size)
+
+        self.assertEqual(expected_location, location)
+        self.assertEqual(expected_file_size, size)
+        self.assertEqual(expected_checksum, checksum)
+
+        # -rwx--x--x for store directory
+        self.assertEqual(0o711, stat.S_IMODE(os.stat(store)[stat.ST_MODE]))
+        # -rwxr--r-- for image file
+        mode = os.stat(expected_location[len('file:/'):])[stat.ST_MODE]
+        perm = int(str(self.conf.glance_store.filesystem_store_file_perm), 8)
+        self.assertEqual(perm, stat.S_IMODE(mode))
+
+    def test_add_with_file_perm_for_owner_users_access(self):
+        """
+        Test that we can add an image via the filesystem backend with a
+        required image file permission.
+        """
+        store = self.useFixture(fixtures.TempDir()).path
+        self.conf.set_override('filesystem_store_datadir', store,
+                               group='glance_store')
+        self.conf.set_override('filesystem_store_file_perm', 600,  # -rw-------
+                               group='glance_store')
+
+        # -rwx------
+        os.chmod(store, 0o700)
+        self.assertEqual(0o700, stat.S_IMODE(os.stat(store)[stat.ST_MODE]))
+
+        self.store.configure_add()
+
+        Store.WRITE_CHUNKSIZE = 1024
+        expected_image_id = str(uuid.uuid4())
+        expected_file_size = 5 * units.Ki  # 5K
+        expected_file_contents = "*" * expected_file_size
+        expected_checksum = hashlib.md5(expected_file_contents).hexdigest()
+        expected_location = "file://%s/%s" % (store,
+                                              expected_image_id)
+        image_file = six.StringIO(expected_file_contents)
+
+        location, size, checksum, _ = self.store.add(expected_image_id,
+                                                     image_file,
+                                                     expected_file_size)
+
+        self.assertEqual(expected_location, location)
+        self.assertEqual(expected_file_size, size)
+        self.assertEqual(expected_checksum, checksum)
+
+        # -rwx------ for store directory
+        self.assertEqual(0o700, stat.S_IMODE(os.stat(store)[stat.ST_MODE]))
+        # -rw------- for image file
+        mode = os.stat(expected_location[len('file:/'):])[stat.ST_MODE]
+        perm = int(str(self.conf.glance_store.filesystem_store_file_perm), 8)
+        self.assertEqual(perm, stat.S_IMODE(mode))

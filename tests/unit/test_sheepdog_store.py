@@ -25,7 +25,7 @@ from glance_store.tests import base
 class TestSheepdogStore(base.StoreBaseTest):
 
     def setUp(self):
-        """Establish a clean test environment"""
+        """Establish a clean test environment."""
         super(TestSheepdogStore, self).setUp()
 
         def _fake_execute(*cmd, **kwargs):
@@ -38,6 +38,7 @@ class TestSheepdogStore(base.StoreBaseTest):
         execute.side_effect = _fake_execute
         self.addCleanup(execute.stop)
         self.store = sheepdog.Store(self.conf)
+        self.store.configure()
 
     def test_cleanup_when_add_image_exception(self):
         called_commands = []

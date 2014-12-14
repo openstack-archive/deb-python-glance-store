@@ -19,13 +19,13 @@ import hashlib
 import uuid
 
 import mock
+from oslo.utils import units
 import six
 
 import glance_store._drivers.vmware_datastore as vm_store
 from glance_store import backend
 from glance_store import exceptions
-from glance_store.location import get_location_from_uri
-from glance_store.openstack.common import units
+from glance_store import location
 from glance_store.tests import base
 from glance_store.tests import utils
 
@@ -45,7 +45,7 @@ VMWARE_DS = {
     'vmware_datacenter_path': 'dc1',
     'vmware_datastore_name': 'ds1',
     'vmware_store_image_dir': '/openstack_glance',
-    'vmware_api_insecure': 'True'
+    'vmware_api_insecure': 'True',
 }
 
 
@@ -81,12 +81,12 @@ class TestStore(base.StoreBaseTest):
 
     @mock.patch('oslo.vmware.api.VMwareAPISession', auptospec=True)
     def setUp(self, mock_session):
-        """Establish a clean test environment"""
+        """Establish a clean test environment."""
         super(TestStore, self).setUp()
 
         vm_store.Store.CHUNKSIZE = 2
         self.config(default_store='vmware', stores=['vmware'])
-        backend.register_store_opts(self.conf)
+        backend.register_opts(self.conf)
         self.config(group='glance_store',
                     vmware_server_username='admin',
                     vmware_server_password='admin',
@@ -131,34 +131,34 @@ class TestStore(base.StoreBaseTest):
         vm_store.Store._build_vim_cookie_header = mock.Mock()
 
     def test_get(self):
-        """Test a "normal" retrieval of an image in chunks"""
+        """Test a "normal" retrieval of an image in chunks."""
         expected_image_size = 31
-        expected_returns = ['I ', 'am', ' a', ' t', 'ea', 'po', 't,', ' s',
-                            'ho', 'rt', ' a', 'nd', ' s', 'to', 'ut', '\n']
-        loc = get_location_from_uri(
+        expected_returns = ['I am a teapot, short and stout\n']
+        loc = location.get_location_from_uri(
             "vsphere://127.0.0.1/folder/openstack_glance/%s"
-            "?dsName=ds1&dcPath=dc1" % FAKE_UUID)
+            "?dsName=ds1&dcPath=dc1" % FAKE_UUID, conf=self.conf)
         with mock.patch('httplib.HTTPConnection') as HttpConn:
             HttpConn.return_value = FakeHTTPConnection()
             (image_file, image_size) = self.store.get(loc)
         self.assertEqual(image_size, expected_image_size)
         chunks = [c for c in image_file]
-        self.assertEqual(chunks, expected_returns)
+        self.assertEqual(expected_returns, chunks)
 
     def test_get_non_existing(self):
         """
         Test that trying to retrieve an image that doesn't exist
         raises an error
         """
-        loc = get_location_from_uri("vsphere://127.0.0.1/folder/openstack_glan"
-                                    "ce/%s?dsName=ds1&dcPath=dc1" % FAKE_UUID)
+        loc = location.get_location_from_uri(
+            "vsphere://127.0.0.1/folder/openstack_glan"
+            "ce/%s?dsName=ds1&dcPath=dc1" % FAKE_UUID, conf=self.conf)
         with mock.patch('httplib.HTTPConnection') as HttpConn:
             HttpConn.return_value = FakeHTTPConnection(status=404)
             self.assertRaises(exceptions.NotFound, self.store.get, loc)
 
     @mock.patch.object(vm_store._Reader, 'size')
     def test_add(self, fake_size):
-        """Test that we can add an image via the VMware backend"""
+        """Test that we can add an image via the VMware backend."""
         expected_image_id = str(uuid.uuid4())
         expected_size = FIVE_KB
         expected_contents = "*" * expected_size
@@ -215,10 +215,10 @@ class TestStore(base.StoreBaseTest):
         self.assertEqual(expected_checksum, checksum)
 
     def test_delete(self):
-        """Test we can delete an existing image in the VMware store"""
-        loc = get_location_from_uri(
+        """Test we can delete an existing image in the VMware store."""
+        loc = location.get_location_from_uri(
             "vsphere://127.0.0.1/folder/openstack_glance/%s?"
-            "dsName=ds1&dcPath=dc1" % FAKE_UUID)
+            "dsName=ds1&dcPath=dc1" % FAKE_UUID, conf=self.conf)
         with mock.patch('httplib.HTTPConnection') as HttpConn:
             HttpConn.return_value = FakeHTTPConnection()
             vm_store.Store._service_content = mock.Mock()
@@ -228,10 +228,12 @@ class TestStore(base.StoreBaseTest):
             self.assertRaises(exceptions.NotFound, self.store.get, loc)
 
     def test_get_size(self):
-        """Test we can get the size of an existing image in the VMware store"""
-        loc = get_location_from_uri(
+        """
+        Test we can get the size of an existing image in the VMware store
+        """
+        loc = location.get_location_from_uri(
             "vsphere://127.0.0.1/folder/openstack_glance/%s"
-            "?dsName=ds1&dcPath=dc1" % FAKE_UUID)
+            "?dsName=ds1&dcPath=dc1" % FAKE_UUID, conf=self.conf)
         with mock.patch('httplib.HTTPConnection') as HttpConn:
             HttpConn.return_value = FakeHTTPConnection()
             image_size = self.store.get_size(loc)
@@ -242,13 +244,50 @@ class TestStore(base.StoreBaseTest):
         Test that trying to retrieve an image size that doesn't exist
         raises an error
         """
-        loc = get_location_from_uri("vsphere://127.0.0.1/folder/openstack_glan"
-                                    "ce/%s?dsName=ds1&dcPath=dc1" % FAKE_UUID)
+        loc = location.get_location_from_uri(
+            "vsphere://127.0.0.1/folder/openstack_glan"
+            "ce/%s?dsName=ds1&dcPath=dc1" % FAKE_UUID, conf=self.conf)
         with mock.patch('httplib.HTTPConnection') as HttpConn:
             HttpConn.return_value = FakeHTTPConnection(status=404)
             self.assertRaises(exceptions.NotFound, self.store.get_size, loc)
 
-    def test_reader_image_fits_in_blocksize(self):
+    def test_reader_full(self):
+        content = 'XXX'
+        image = six.StringIO(content)
+        expected_checksum = hashlib.md5(content).hexdigest()
+        reader = vm_store._Reader(image)
+        ret = reader.read()
+        self.assertEqual(content, ret)
+        self.assertEqual(expected_checksum, reader.checksum.hexdigest())
+        self.assertEqual(len(content), reader.size)
+
+    def test_reader_partial(self):
+        content = 'XXX'
+        image = six.StringIO(content)
+        expected_checksum = hashlib.md5('X').hexdigest()
+        reader = vm_store._Reader(image)
+        ret = reader.read(1)
+        self.assertEqual('X', ret)
+        self.assertEqual(expected_checksum, reader.checksum.hexdigest())
+        self.assertEqual(1, reader.size)
+
+    def test_rewind(self):
+        content = 'XXX'
+        image = six.StringIO(content)
+        expected_checksum = hashlib.md5(content).hexdigest()
+        reader = vm_store._Reader(image)
+        reader.read(1)
+        ret = reader.read()
+        self.assertEqual('XX', ret)
+        self.assertEqual(expected_checksum, reader.checksum.hexdigest())
+        self.assertEqual(len(content), reader.size)
+        reader.rewind()
+        ret = reader.read()
+        self.assertEqual(content, ret)
+        self.assertEqual(expected_checksum, reader.checksum.hexdigest())
+        self.assertEqual(len(content), reader.size)
+
+    def test_chunkreader_image_fits_in_blocksize(self):
         """
         Test that the image file reader returns the expected chunk of data
         when the block size is larger than the image.
@@ -256,8 +295,7 @@ class TestStore(base.StoreBaseTest):
         content = 'XXX'
         image = six.StringIO(content)
         expected_checksum = hashlib.md5(content).hexdigest()
-        checksum = hashlib.md5()
-        reader = vm_store._Reader(image, checksum)
+        reader = vm_store._ChunkReader(image)
         ret = reader.read()
         expected_chunk = '%x\r\n%s\r\n' % (len(content), content)
         last_chunk = '0\r\n\r\n'
@@ -271,7 +309,7 @@ class TestStore(base.StoreBaseTest):
         self.assertTrue(reader.closed)
         self.assertEqual('', ret)
 
-    def test_reader_image_larger_blocksize(self):
+    def test_chunkreader_image_larger_blocksize(self):
         """
         Test that the image file reader returns the expected chunks when
         the block size specified is smaller than the image.
@@ -279,9 +317,8 @@ class TestStore(base.StoreBaseTest):
         content = 'XXX'
         image = six.StringIO(content)
         expected_checksum = hashlib.md5(content).hexdigest()
-        checksum = hashlib.md5()
         last_chunk = '0\r\n\r\n'
-        reader = vm_store._Reader(image, checksum, blocksize=1)
+        reader = vm_store._ChunkReader(image, blocksize=1)
         ret = reader.read()
         expected_chunk = '1\r\nX\r\n'
         self.assertEqual('%s%s%s%s' % (expected_chunk, expected_chunk,
@@ -290,13 +327,12 @@ class TestStore(base.StoreBaseTest):
         self.assertEqual(image.len, reader.size)
         self.assertTrue(reader.closed)
 
-    def test_reader_size(self):
+    def test_chunkreader_size(self):
         """Test that the image reader takes into account the specified size."""
         content = 'XXX'
         image = six.StringIO(content)
         expected_checksum = hashlib.md5(content).hexdigest()
-        checksum = hashlib.md5()
-        reader = vm_store._Reader(image, checksum, blocksize=1)
+        reader = vm_store._ChunkReader(image, blocksize=1)
         ret = reader.read(size=3)
         self.assertEqual('1\r\n', ret)
         ret = reader.read(size=1)
@@ -305,3 +341,49 @@ class TestStore(base.StoreBaseTest):
         self.assertEqual(expected_checksum, reader.checksum.hexdigest())
         self.assertEqual(image.len, reader.size)
         self.assertTrue(reader.closed)
+
+    def test_sanity_check_api_retry_count(self):
+        """Test that sanity check raises if api_retry_count is <= 0."""
+        self.store.conf.glance_store.vmware_api_retry_count = -1
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store._sanity_check)
+        self.store.conf.glance_store.vmware_api_retry_count = 0
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store._sanity_check)
+        self.store.conf.glance_store.vmware_api_retry_count = 1
+        try:
+            self.store._sanity_check()
+        except exceptions.BadStoreConfiguration:
+            self.fail()
+
+    def test_sanity_check_task_poll_interval(self):
+        """Test that sanity check raises if task_poll_interval is <= 0."""
+        self.store.conf.glance_store.vmware_task_poll_interval = -1
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store._sanity_check)
+        self.store.conf.glance_store.vmware_task_poll_interval = 0
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store._sanity_check)
+        self.store.conf.glance_store.vmware_task_poll_interval = 1
+        try:
+            self.store._sanity_check()
+        except exceptions.BadStoreConfiguration:
+            self.fail()
+
+    def test_retry_count(self):
+        expected_image_id = str(uuid.uuid4())
+        expected_size = FIVE_KB
+        expected_contents = "*" * expected_size
+        image = six.StringIO(expected_contents)
+        self.store._create_session = mock.Mock()
+        with mock.patch('httplib.HTTPConnection') as HttpConn:
+            HttpConn.return_value = FakeHTTPConnection(status=401)
+            try:
+                location, size, checksum, _ = self.store.add(expected_image_id,
+                                                             image,
+                                                             expected_size)
+            except exceptions.NotAuthenticated:
+                pass
+        self.assertEqual(
+            self.store.conf.glance_store.vmware_api_retry_count + 1,
+            self.store._create_session.call_count)

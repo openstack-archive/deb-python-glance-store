@@ -21,6 +21,7 @@ import logging
 import math
 
 from oslo.config import cfg
+from oslo.utils import excutils
 import six.moves.urllib.parse as urlparse
 import swiftclient
 import urllib
@@ -28,11 +29,12 @@ import urllib
 import glance_store
 from glance_store._drivers.swift import utils as sutils
 from glance_store.common import auth
+from glance_store.common import utils as cutils
 from glance_store import driver
 from glance_store import exceptions
 from glance_store import i18n
 from glance_store import location
-from glance_store.openstack.common import excutils
+
 
 _ = i18n._
 LOG = logging.getLogger(__name__)
@@ -101,10 +103,6 @@ _SWIFT_OPTS = [
                       'before the request fails.'))
 ]
 
-CONF = cfg.CONF
-
-SWIFT_STORE_REF_PARAMS = sutils.SwiftParams().params
-
 
 def swift_retry_iter(resp_iter, length, store, location, context):
     length = length if length else (resp_iter.len
@@ -118,7 +116,8 @@ def swift_retry_iter(resp_iter, length, store, location, context):
                 yield chunk
                 bytes_read += len(chunk)
         except swiftclient.ClientException as e:
-            LOG.warn(_(u"Swift exception raised %s") % unicode(e))
+            LOG.warn(_("Swift exception raised %s") %
+                     cutils.exception_to_str(e))
 
         if bytes_read != length:
             if retries == store.conf.glance_store.swift_store_retry_get_count:
@@ -137,9 +136,9 @@ def swift_retry_iter(resp_iter, length, store, location, context):
                           'max_retries': retry_count,
                           'start': bytes_read,
                           'end': length})
-                (resp_headers, resp_iter) = store._get_object(location, None,
-                                                              bytes_read,
-                                                              context=context)
+                (_resp_headers, resp_iter) = store._get_object(location, None,
+                                                               bytes_read,
+                                                               context=context)
         else:
             break
 
@@ -192,7 +191,7 @@ class StoreLocation(location.StoreLocation):
         if not credentials_included:
             #Used only in case of an add
             #Get the current store from config
-            store = CONF.glance_store.default_swift_reference
+            store = self.conf.glance_store.default_swift_reference
 
             return '%s://%s/%s/%s' % ('swift+config', store, container, obj)
         if self.scheme == 'swift+config':
@@ -207,9 +206,10 @@ class StoreLocation(location.StoreLocation):
 
     def _get_conf_value_from_account_ref(self, netloc):
         try:
-            self.user = SWIFT_STORE_REF_PARAMS[netloc]['user']
-            self.key = SWIFT_STORE_REF_PARAMS[netloc]['key']
-            netloc = SWIFT_STORE_REF_PARAMS[netloc]['auth_address']
+            ref_params = sutils.SwiftParams(self.conf).params
+            self.user = ref_params[netloc]['user']
+            self.key = ref_params[netloc]['key']
+            netloc = ref_params[netloc]['auth_address']
             self.ssl_enabled = True
             if netloc != '':
                 if netloc.startswith('http://'):
@@ -306,7 +306,7 @@ class StoreLocation(location.StoreLocation):
         path = pieces.path.lstrip('/')
 
         # NOTE(Sridevi): Fix to map the account reference to the
-        # corresponding CONF value
+        # corresponding configuration value
         if self.scheme == 'swift+config':
             netloc = self._get_conf_value_from_account_ref(netloc)
         else:
@@ -341,7 +341,8 @@ class StoreLocation(location.StoreLocation):
 
 def Store(conf):
     try:
-        conf.register_opts(_SWIFT_OPTS, group='glance_store')
+        conf.register_opts(_SWIFT_OPTS + sutils.swift_opts,
+                           group='glance_store')
     except cfg.DuplicateOptError:
         pass
 
@@ -349,13 +350,13 @@ def Store(conf):
         return MultiTenantStore(conf)
     return SingleTenantStore(conf)
 
-Store.OPTIONS = _SWIFT_OPTS
+Store.OPTIONS = _SWIFT_OPTS + sutils.swift_opts
 
 
 class BaseStore(driver.Store):
 
     CHUNKSIZE = 65536
-    OPTIONS = _SWIFT_OPTS
+    OPTIONS = _SWIFT_OPTS + sutils.swift_opts
 
     def get_schemes(self):
         return ('swift+https', 'swift', 'swift+http', 'swift+config')
@@ -397,13 +398,8 @@ class BaseStore(driver.Store):
 
         return (resp_headers, resp_body)
 
-    def validate_location(self, uri):
-        pieces = urlparse.urlparse(uri)
-        if pieces.scheme in ['swift+config']:
-            reason = (_("Location credentials are invalid"))
-            raise exceptions.BadStoreUri(message=reason)
-
-    def get(self, location, connection=None, offset=0, chunk_size=None, context=None):
+    def get(self, location, connection=None,
+            offset=0, chunk_size=None, context=None):
         location = location.store_location
         (resp_headers, resp_body) = self._get_object(location, connection,
                                                      context=context)
@@ -564,7 +560,7 @@ class BaseStore(driver.Store):
             # image data. We *really* should consider NOT returning
             # the location attribute from GET /images/<ID> and
             # GET /images/details
-            if sutils.is_multiple_swift_store_accounts_enabled():
+            if sutils.is_multiple_swift_store_accounts_enabled(self.conf):
                 include_creds = False
             else:
                 include_creds = True
@@ -577,7 +573,7 @@ class BaseStore(driver.Store):
                 raise exceptions.Duplicate(message=msg)
 
             msg = (_(u"Failed to add object to Swift.\n"
-                     "Got error from Swift: %s") % unicode(e))
+                     "Got error from Swift: %s.") % cutils.exception_to_str(e))
             LOG.error(msg)
             raise glance_store.BackendException(msg)
 
@@ -609,8 +605,13 @@ class BaseStore(driver.Store):
                     # since we're simply sending off parallelizable requests
                     # to Swift to delete stuff. It's not like we're going to
                     # be hogging up network or file I/O here...
-                    connection.delete_object(obj_container,
-                                             segment['name'])
+                    try:
+                        connection.delete_object(obj_container,
+                                                 segment['name'])
+                    except swiftclient.ClientException as e:
+                        msg = _('Unable to delete segment %(segment_name)s')
+                        msg = msg % {'segment_name': segment['name']}
+                        LOG.exception(msg)
 
             # Delete object (or, in segmented case, the manifest)
             connection.delete_object(location.container, location.obj)
@@ -642,7 +643,8 @@ class BaseStore(driver.Store):
                         connection.put_container(container)
                     except swiftclient.ClientException as e:
                         msg = (_("Failed to add container to Swift.\n"
-                                 "Got error from Swift: %(e)s") % {'e': e})
+                                 "Got error from Swift: %s.") %
+                               cutils.exception_to_str(e))
                         raise glance_store.BackendException(msg)
                 else:
                     msg = (_("The container %(container)s does not exist in "
@@ -664,14 +666,17 @@ class BaseStore(driver.Store):
 class SingleTenantStore(BaseStore):
     EXAMPLE_URL = "swift://<USER>:<KEY>@<AUTH_ADDRESS>/<CONTAINER>/<FILE>"
 
+    def __init__(self, conf):
+        super(SingleTenantStore, self).__init__(conf)
+        self.ref_params = sutils.SwiftParams(self.conf).params
+
     def configure(self):
         super(SingleTenantStore, self).configure()
         self.auth_version = self._option_get('swift_store_auth_version')
 
     def configure_add(self):
-        default_swift_reference = \
-            SWIFT_STORE_REF_PARAMS.get(
-                self.conf.glance_store.default_swift_reference)
+        default_ref = self.conf.glance_store.default_swift_reference
+        default_swift_reference = self.ref_params.get(default_ref)
         if default_swift_reference:
             self.auth_address = default_swift_reference.get('auth_address')
         if (not default_swift_reference) or (not self.auth_address):
@@ -700,7 +705,7 @@ class SingleTenantStore(BaseStore):
                  'auth_or_store_url': self.auth_address,
                  'user': self.user,
                  'key': self.key}
-        return StoreLocation(specs)
+        return StoreLocation(specs, self.conf)
 
     def get_connection(self, location, context=None):
         if not location.user:
@@ -781,7 +786,7 @@ class MultiTenantStore(BaseStore):
 
         headers = {}
         if public:
-            headers['X-Container-Read'] = ".r:*,.rlistings"
+            headers['X-Container-Read'] = "*:*"
         elif read_tenants:
             headers['X-Container-Read'] = ','.join('%s:*' % i
                                                    for i in read_tenants)
@@ -810,7 +815,7 @@ class MultiTenantStore(BaseStore):
                  'container': self.container + '_' + str(image_id),
                  'obj': str(image_id),
                  'auth_or_store_url': ep}
-        return StoreLocation(specs)
+        return StoreLocation(specs, self.conf)
 
     def get_connection(self, location, context=None):
         return swiftclient.Connection(

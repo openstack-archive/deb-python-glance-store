@@ -14,17 +14,21 @@
 #    under the License.
 
 import logging
-import sys
 
 from oslo.config import cfg
 from stevedore import driver
+from stevedore import extension
 
+from glance_store.common import utils
 from glance_store import exceptions
-from glance_store.i18n import _
+from glance_store import i18n
 from glance_store import location
 
 
+CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
+
+_ = i18n._
 
 _DEPRECATED_STORE_OPTS = [
     cfg.DeprecatedOpt('known_stores', group='DEFAULT'),
@@ -42,37 +46,41 @@ _STORE_OPTS = [
                deprecated_opts=[_DEPRECATED_STORE_OPTS[1]])
 ]
 
-CONF = cfg.CONF
 _STORE_CFG_GROUP = 'glance_store'
 
 
-def _oslo_config_options():
-    return ((opt, _STORE_CFG_GROUP) for opt in _STORE_OPTS)
+def _list_opts():
+    driver_opts = []
+    mgr = extension.ExtensionManager('glance_store.drivers')
+    # NOTE(zhiyan): Handle available drivers entry_points provided
+    drivers = [ext.name for ext in mgr]
+    handled_drivers = []  # Used to handle backwards-compatible entries
+    for store_entry in drivers:
+        driver_cls = _load_store(None, store_entry, False)
+        if driver_cls and driver_cls not in handled_drivers:
+            if getattr(driver_cls, 'OPTIONS', None) is not None:
+                # NOTE(flaper87): To be removed in k-2. This should
+                # give deployers enough time to migrate their systems
+                # and move configs under the new section.
+                for opt in driver_cls.OPTIONS:
+                    opt.deprecated_opts = [cfg.DeprecatedOpt(opt.name,
+                                                             group='DEFAULT')]
+                    driver_opts.append(opt)
+            handled_drivers.append(driver_cls)
+
+    # NOTE(zhiyan): This separated approach could list
+    # store options before all driver ones, which easier
+    # to read and configure by operator.
+    return ([(_STORE_CFG_GROUP, _STORE_OPTS)] +
+            [(_STORE_CFG_GROUP, driver_opts)])
 
 
 def register_opts(conf):
-    for opt, group in _oslo_config_options():
-        conf.register_opt(opt, group=group)
-    register_store_opts(conf)
-
-
-def register_store_opts(conf):
-    for store_entry in set(conf.glance_store.stores):
-        LOG.debug("Registering options for %s" % store_entry)
-        store_cls = _load_store(conf, store_entry, False)
-
-        if store_cls is None:
-            msg = _('Store %s not found') % store_entry
-            raise exceptions.GlanceStoreException(message=msg)
-
-        if getattr(store_cls, 'OPTIONS', None) is not None:
-            # NOTE(flaper87): To be removed in k-2. This should
-            # give deployers enough time to migrate their systems
-            # and move configs under the new section.
-            for opt in store_cls.OPTIONS:
-                opt.deprecated_opts = [cfg.DeprecatedOpt(opt.name,
-                                                         group='DEFAULT')]
-                conf.register_opt(opt, group=_STORE_CFG_GROUP)
+    opts = _list_opts()
+    for group, opt_list in opts:
+        LOG.debug("Registering options for group %s" % group)
+        for opt in opt_list:
+            conf.register_opt(opt, group=group)
 
 
 class Indexable(object):
@@ -123,7 +131,7 @@ class Indexable(object):
         return self.chunk
 
     def another(self):
-        """Implemented by subclasses to return the next element"""
+        """Implemented by subclasses to return the next element."""
         raise NotImplementedError
 
     def getvalue(self):
@@ -140,7 +148,6 @@ class Indexable(object):
 
 
 def _load_store(conf, store_entry, invoke_load=True):
-    store_cls = None
     try:
         LOG.debug("Attempting to import store %s", store_entry)
         mgr = driver.DriverManager('glance_store.drivers',
@@ -148,7 +155,7 @@ def _load_store(conf, store_entry, invoke_load=True):
                                    invoke_args=[conf],
                                    invoke_on_load=invoke_load)
         return mgr.driver
-    except RuntimeError as ex:
+    except RuntimeError:
         LOG.warn("Failed to load driver %(driver)s."
                  "The driver will be disabled" % dict(driver=driver))
 
@@ -166,7 +173,7 @@ def _load_stores(conf):
 
             yield (store_entry, store_instance)
 
-        except exceptions.BadStoreConfiguration as e:
+        except exceptions.BadStoreConfiguration:
             continue
 
 
@@ -176,15 +183,17 @@ def create_stores(conf=CONF):
     from the given config. Duplicates are not re-registered.
     """
     store_count = 0
-    store_classes = set()
 
     for (store_entry, store_instance) in _load_stores(conf):
-        schemes = store_instance.get_schemes()
-        store_instance.configure()
+        try:
+            schemes = store_instance.get_schemes()
+            store_instance.configure()
+        except NotImplementedError:
+            continue
         if not schemes:
             raise exceptions.BackendException('Unable to register store %s. '
                                               'No schemes associated with it.'
-                                              % store_cls)
+                                              % store_entry)
         else:
             LOG.debug("Registering store %s with schemes %s",
                       store_entry, schemes)
@@ -203,7 +212,7 @@ def create_stores(conf=CONF):
 
 
 def verify_default_store():
-    scheme = cfg.CONF.glance_store.default_store
+    scheme = CONF.glance_store.default_store
     try:
         get_store_from_scheme(scheme)
     except exceptions.UnknownScheme:
@@ -212,7 +221,7 @@ def verify_default_store():
 
 
 def get_known_schemes():
-    """Returns list of known schemes"""
+    """Returns list of known schemes."""
     return location.SCHEME_TO_CLS_MAP.keys()
 
 
@@ -239,9 +248,9 @@ def get_store_from_uri(uri):
 
 
 def get_from_backend(uri, offset=0, chunk_size=None, context=None):
-    """Yields chunks of data from backend specified by uri"""
+    """Yields chunks of data from backend specified by uri."""
 
-    loc = location.get_location_from_uri(uri)
+    loc = location.get_location_from_uri(uri, conf=CONF)
     store = get_store_from_uri(uri)
 
     try:
@@ -253,17 +262,18 @@ def get_from_backend(uri, offset=0, chunk_size=None, context=None):
 
 
 def get_size_from_backend(uri, context=None):
-    """Retrieves image size from backend specified by uri"""
+    """Retrieves image size from backend specified by uri."""
 
-    loc = location.get_location_from_uri(uri)
+    loc = location.get_location_from_uri(uri, conf=CONF)
     store = get_store_from_uri(uri)
 
     return store.get_size(loc, context=context)
 
 
 def delete_from_backend(uri, context=None):
-    """Removes chunks of data from backend specified by uri"""
-    loc = location.get_location_from_uri(uri)
+    """Removes chunks of data from backend specified by uri."""
+
+    loc = location.get_location_from_uri(uri, conf=CONF)
     store = get_store_from_uri(uri)
 
     try:
@@ -280,32 +290,8 @@ def get_store_from_location(uri):
 
     :param uri: Location to check for the store
     """
-    loc = location.get_location_from_uri(uri)
+    loc = location.get_location_from_uri(uri, conf=CONF)
     return loc.store_name
-
-
-def safe_delete_from_backend(uri, image_id, context=None):
-    """Given a uri, delete an image from the store."""
-    try:
-        return delete_from_backend(uri, context=context)
-    except exceptions.NotFound:
-        msg = _('Failed to delete image %s in store from URI')
-        LOG.warn(msg % image_id)
-    except exceptions.StoreDeleteNotSupported as e:
-        LOG.warn(str(e))
-    except exceptions.UnsupportedBackend:
-        exc_type = sys.exc_info()[0].__name__
-        msg = (_('Failed to delete image %(image_id)s '
-                 'from store (%(exc_type)s)') %
-               dict(image_id=image_id, exc_type=exc_type))
-        LOG.error(msg)
-
-
-def _delete_image_from_backend(context, store_api, image_id, uri):
-    if CONF.delayed_delete:
-        store_api.schedule_delayed_delete_from_backend(context, uri, image_id)
-    else:
-        store_api.safe_delete_from_backend(context, uri, image_id)
 
 
 def check_location_metadata(val, key=''):
@@ -339,7 +325,10 @@ def store_add_to_backend(image_id, data, size, store, context=None):
              the checksum of the data
              the storage systems metadata dictionary for the location
     """
-    (location, size, checksum, metadata) = store.add(image_id, data, size)
+    (location, size, checksum, metadata) = store.add(image_id,
+                                                     data,
+                                                     size,
+                                                     context=context)
     if metadata is not None:
         if not isinstance(metadata, dict):
             msg = (_("The storage driver %(driver)s returned invalid "
@@ -352,9 +341,9 @@ def store_add_to_backend(image_id, data, size, store, context=None):
         except exceptions.BackendException as e:
             e_msg = (_("A bad metadata structure was returned from the "
                        "%(driver)s storage driver: %(metadata)s.  %(e)s.") %
-                     dict(driver=unicode(store),
-                          metadata=unicode(metadata),
-                          e=unicode(e)))
+                     dict(driver=utils.exception_to_str(store),
+                          metadata=utils.exception_to_str(metadata),
+                          e=utils.exception_to_str(e)))
             LOG.error(e_msg)
             raise exceptions.BackendException(e_msg)
     return (location, size, checksum, metadata)
@@ -376,17 +365,13 @@ def set_acls(location_uri, public=False, read_tenants=[],
     if write_tenants is None:
         write_tenants = []
 
-    loc = location.get_location_from_uri(location_uri)
+    loc = location.get_location_from_uri(location_uri, conf=CONF)
     scheme = get_store_from_location(location_uri)
     store = get_store_from_scheme(scheme)
     try:
         store.set_acls(loc, public=public,
                        read_tenants=read_tenants,
-                       write_tenants=write_tenants)
+                       write_tenants=write_tenants,
+                       context=context)
     except NotImplementedError:
         LOG.debug(_("Skipping store.set_acls... not implemented."))
-
-
-def validate_location(uri, context=None):
-    store = get_store_from_uri(uri)
-    store.validate_location(uri)

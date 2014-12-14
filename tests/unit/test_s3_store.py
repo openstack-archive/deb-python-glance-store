@@ -18,16 +18,15 @@
 import hashlib
 import StringIO
 import uuid
+import xml.etree.ElementTree
 
 import boto.s3.connection
 import mock
-
-from glance_store import exceptions
-from glance_store.openstack.common import units
+from oslo.utils import units
 
 from glance_store._drivers import s3
-from glance_store.exceptions import UnsupportedBackend
-from glance_store.location import get_location_from_uri
+from glance_store import exceptions
+from glance_store import location
 from glance_store.tests import base
 
 
@@ -37,7 +36,12 @@ FIVE_KB = 5 * units.Ki
 S3_CONF = {'s3_store_access_key': 'user',
            's3_store_secret_key': 'key',
            's3_store_host': 'localhost:8080',
-           's3_store_bucket': 'glance'}
+           's3_store_bucket': 'glance',
+           's3_store_large_object_size': 5,        # over 5MB is large
+           's3_store_large_object_chunk_size': 6}  # part size is 6MB
+
+# ensure that mpu api is used and parts are uploaded as expected
+mpu_parts_uploaded = 0
 
 
 class FakeKey(object):
@@ -49,6 +53,7 @@ class FakeKey(object):
         self.name = name
         self.data = None
         self.size = 0
+        self.etag = None
         self.BufferSize = 1024
 
     def close(self):
@@ -70,16 +75,94 @@ class FakeKey(object):
         return checksum_hex, None
 
     def set_contents_from_file(self, fp, replace=False, **kwargs):
+        max_read = kwargs.get('size')
         self.data = StringIO.StringIO()
-        for bytes in fp:
-            self.data.write(bytes)
+        checksum = hashlib.md5()
+        while True:
+            if max_read is None or max_read > self.BufferSize:
+                read_size = self.BufferSize
+            elif max_read <= 0:
+                break
+            else:
+                read_size = max_read
+            chunk = fp.read(read_size)
+            if not chunk:
+                break
+            checksum.update(chunk)
+            self.data.write(chunk)
+            if max_read is not None:
+                max_read -= len(chunk)
         self.size = self.data.len
         # Reset the buffer to start
         self.data.seek(0)
+        self.etag = checksum.hexdigest()
         self.read = self.data.read
 
     def get_file(self):
         return self.data
+
+
+class FakeMPU:
+    """
+    Acts like a ``boto.s3.multipart.MultiPartUpload``
+    """
+    def __init__(self, bucket, key_name):
+        self.bucket = bucket
+        self.id = str(uuid.uuid4())
+        self.key_name = key_name
+        self.parts = {}  # pnum -> FakeKey
+        global mpu_parts_uploaded
+        mpu_parts_uploaded = 0
+
+    def upload_part_from_file(self, fp, part_num, **kwargs):
+        size = kwargs.get('size')
+        part = FakeKey(self.bucket, self.key_name)
+        part.set_contents_from_file(fp, size=size)
+        self.parts[part_num] = part
+        global mpu_parts_uploaded
+        mpu_parts_uploaded += 1
+        return part
+
+    def verify_xml(self, xml_body):
+        """
+        Verify xml matches our part info.
+        """
+        xmlparts = {}
+        cmuroot = xml.etree.ElementTree.fromstring(xml_body)
+        for cmupart in cmuroot:
+            pnum = int(cmupart.findtext('PartNumber'))
+            etag = cmupart.findtext('ETag')
+            xmlparts[pnum] = etag
+        if len(xmlparts) != len(self.parts):
+            return False
+        for pnum in xmlparts.keys():
+            if self.parts[pnum] is None:
+                return False
+            if xmlparts[pnum] != self.parts[pnum].etag:
+                return False
+        return True
+
+    def complete_key(self):
+        """
+        Complete the parts into one big FakeKey
+        """
+        key = FakeKey(self.bucket, self.key_name)
+        key.data = StringIO.StringIO()
+        checksum = hashlib.md5()
+        cnt = 0
+        for pnum in sorted(self.parts.keys()):
+            cnt += 1
+            part = self.parts[pnum]
+            chunk = part.data.read(key.BufferSize)
+            while chunk:
+                checksum.update(chunk)
+                key.data.write(chunk)
+                chunk = part.data.read(key.BufferSize)
+        key.size = key.data.len
+        key.data.seek(0)
+        key.etag = checksum.hexdigest() + '-%d' % cnt
+        key.read = key.data.read
+        return key
 
 
 class FakeBucket:
@@ -87,6 +170,7 @@ class FakeBucket:
     def __init__(self, name, keys=None):
         self.name = name
         self.keys = keys or {}
+        self.mpus = {}  # {key_name -> {id -> FakeMPU}}
 
     def __str__(self):
         return self.name
@@ -108,6 +192,37 @@ class FakeBucket:
         self.keys[key_name] = new_key
         return new_key
 
+    def initiate_multipart_upload(self, key_name, **kwargs):
+        mpu = FakeMPU(self, key_name)
+        if key_name not in self.mpus:
+            self.mpus[key_name] = {}
+        self.mpus[key_name][mpu.id] = mpu
+        return mpu
+
+    def cancel_multipart_upload(self, key_name, upload_id, **kwargs):
+        if key_name in self.mpus:
+            if upload_id in self.mpus[key_name]:
+                del self.mpus[key_name][upload_id]
+                if not self.mpus[key_name]:
+                    del self.mpus[key_name]
+
+    def complete_multipart_upload(self, key_name, upload_id,
+                                  xml_body, **kwargs):
+        if key_name in self.mpus:
+            if upload_id in self.mpus[key_name]:
+                mpu = self.mpus[key_name][upload_id]
+                if mpu.verify_xml(xml_body):
+                    key = mpu.complete_key()
+                    self.cancel_multipart_upload(key_name, upload_id)
+                    self.keys[key_name] = key
+                    cmpu = mock.Mock()
+                    cmpu.bucket = self
+                    cmpu.bucket_name = self.name
+                    cmpu.key_name = key_name
+                    cmpu.etag = key.etag
+                    return cmpu
+        return None  # tho raising an exception might be better
+
 
 def fakers():
     fixture_buckets = {'glance': FakeBucket('glance')}
@@ -118,7 +233,7 @@ def fakers():
     def fake_connection_constructor(self, *args, **kwargs):
         host = kwargs.get('host')
         if host.startswith('http://') or host.startswith('https://'):
-            raise UnsupportedBackend(host)
+            raise exceptions.UnsupportedBackend(host)
 
     def fake_get_bucket(bucket_id):
         bucket = fixture_buckets.get(bucket_id)
@@ -148,7 +263,7 @@ def format_s3_location(user, key, authurl, bucket, obj):
 class TestStore(base.StoreBaseTest):
 
     def setUp(self):
-        """Establish a clean test environment"""
+        """Establish a clean test environment."""
         super(TestStore, self).setUp()
         self.store = s3.Store(self.conf)
         self.config(**S3_CONF)
@@ -168,9 +283,10 @@ class TestStore(base.StoreBaseTest):
         self.addCleanup(bucket.stop)
 
     def test_get(self):
-        """Test a "normal" retrieval of an image in chunks"""
-        loc = get_location_from_uri(
-            "s3://user:key@auth_address/glance/%s" % FAKE_UUID)
+        """Test a "normal" retrieval of an image in chunks."""
+        loc = location.get_location_from_uri(
+            "s3://user:key@auth_address/glance/%s" % FAKE_UUID,
+            conf=self.conf)
         (image_s3, image_size) = self.store.get(loc)
 
         self.assertEqual(image_size, FIVE_KB)
@@ -183,7 +299,7 @@ class TestStore(base.StoreBaseTest):
         self.assertEqual(expected_data, data)
 
     def test_get_calling_format_path(self):
-        """Test a "normal" retrieval of an image in chunks"""
+        """Test a "normal" retrieval of an image in chunks."""
         self.config(s3_store_bucket_url_format='path')
 
         def fake_S3Connection_init(*args, **kwargs):
@@ -194,12 +310,13 @@ class TestStore(base.StoreBaseTest):
         with mock.patch.object(s3_connection, '__init__') as m:
             m.side_effect = fake_S3Connection_init
 
-            loc = get_location_from_uri(
-                "s3://user:key@auth_address/glance/%s" % FAKE_UUID)
+            loc = location.get_location_from_uri(
+                "s3://user:key@auth_address/glance/%s" % FAKE_UUID,
+                conf=self.conf)
             (image_s3, image_size) = self.store.get(loc)
 
     def test_get_calling_format_default(self):
-        """Test a "normal" retrieval of an image in chunks"""
+        """Test a "normal" retrieval of an image in chunks."""
 
         def fake_S3Connection_init(*args, **kwargs):
             expected_cls = boto.s3.connection.SubdomainCallingFormat
@@ -209,8 +326,9 @@ class TestStore(base.StoreBaseTest):
         with mock.patch.object(s3_connection, '__init__') as m:
             m.side_effect = fake_S3Connection_init
 
-            loc = get_location_from_uri(
-                "s3://user:key@auth_address/glance/%s" % FAKE_UUID)
+            loc = location.get_location_from_uri(
+                "s3://user:key@auth_address/glance/%s" % FAKE_UUID,
+                conf=self.conf)
             (image_s3, image_size) = self.store.get(loc)
 
     def test_get_non_existing(self):
@@ -219,15 +337,15 @@ class TestStore(base.StoreBaseTest):
         raises an error
         """
         uri = "s3://user:key@auth_address/badbucket/%s" % FAKE_UUID
-        loc = get_location_from_uri(uri)
+        loc = location.get_location_from_uri(uri, conf=self.conf)
         self.assertRaises(exceptions.NotFound, self.store.get, loc)
 
         uri = "s3://user:key@auth_address/glance/noexist"
-        loc = get_location_from_uri(uri)
+        loc = location.get_location_from_uri(uri, conf=self.conf)
         self.assertRaises(exceptions.NotFound, self.store.get, loc)
 
     def test_add(self):
-        """Test that we can add an image via the s3 backend"""
+        """Test that we can add an image via the s3 backend."""
         expected_image_id = str(uuid.uuid4())
         expected_s3_size = FIVE_KB
         expected_s3_contents = "*" * expected_s3_size
@@ -240,15 +358,16 @@ class TestStore(base.StoreBaseTest):
             expected_image_id)
         image_s3 = StringIO.StringIO(expected_s3_contents)
 
-        location, size, checksum, _ = self.store.add(expected_image_id,
-                                                     image_s3,
-                                                     expected_s3_size)
+        loc, size, checksum, _ = self.store.add(expected_image_id,
+                                                image_s3,
+                                                expected_s3_size)
 
-        self.assertEqual(expected_location, location)
+        self.assertEqual(expected_location, loc)
         self.assertEqual(expected_s3_size, size)
         self.assertEqual(expected_checksum, checksum)
 
-        loc = get_location_from_uri(expected_location)
+        loc = location.get_location_from_uri(expected_location,
+                                             conf=self.conf)
         (new_image_s3, new_image_size) = self.store.get(loc)
         new_image_contents = StringIO.StringIO()
         for chunk in new_image_s3:
@@ -258,6 +377,51 @@ class TestStore(base.StoreBaseTest):
         self.assertEqual(expected_s3_contents, new_image_contents.getvalue())
         self.assertEqual(expected_s3_size, new_image_s3_size)
 
+    def test_add_size_variations(self):
+        """
+        Test that adding images of various sizes which exercise both S3
+        single uploads and the multipart upload apis. We've configured
+        the big upload threshold to 5MB and the part size to 6MB.
+        """
+        variations = [(FIVE_KB, 0),  # simple put   (5KB < 5MB)
+                      (5242880, 1),  # 1 part       (5MB <= 5MB < 6MB)
+                      (6291456, 1),  # 1 part exact (5MB <= 6MB <= 6MB)
+                      (7340032, 2)]  # 2 parts      (6MB < 7MB <= 12MB)
+        for (vsize, vcnt) in variations:
+            expected_image_id = str(uuid.uuid4())
+            expected_s3_size = vsize
+            expected_s3_contents = "12345678" * (expected_s3_size / 8)
+            expected_chksum = hashlib.md5(expected_s3_contents).hexdigest()
+            expected_location = format_s3_location(
+                S3_CONF['s3_store_access_key'],
+                S3_CONF['s3_store_secret_key'],
+                S3_CONF['s3_store_host'],
+                S3_CONF['s3_store_bucket'],
+                expected_image_id)
+            image_s3 = StringIO.StringIO(expected_s3_contents)
+
+            # add image
+            loc, size, chksum, _ = self.store.add(expected_image_id,
+                                                  image_s3,
+                                                  expected_s3_size)
+            self.assertEqual(expected_location, loc)
+            self.assertEqual(expected_s3_size, size)
+            self.assertEqual(expected_chksum, chksum)
+            self.assertEqual(vcnt, mpu_parts_uploaded)
+
+            # get image
+            loc = location.get_location_from_uri(expected_location,
+                                                 conf=self.conf)
+            (new_image_s3, new_image_s3_size) = self.store.get(loc)
+            new_image_contents = StringIO.StringIO()
+            for chunk in new_image_s3:
+                new_image_contents.write(chunk)
+            new_image_size = new_image_contents.len
+            self.assertEqual(expected_s3_size, new_image_s3_size)
+            self.assertEqual(expected_s3_size, new_image_size)
+            self.assertEqual(expected_s3_contents,
+                             new_image_contents.getvalue())
+
     def test_add_host_variations(self):
         """
         Test that having http(s):// in the s3serviceurl in config
@@ -265,14 +429,10 @@ class TestStore(base.StoreBaseTest):
         """
         variations = ['http://localhost:80',
                       'http://localhost',
-                      'http://localhost/v1',
-                      'http://localhost/v1/',
                       'https://localhost',
                       'https://localhost:8080',
-                      'https://localhost/v1',
-                      'https://localhost/v1/',
                       'localhost',
-                      'localhost:8080/v1']
+                      'localhost:8080']
         for variation in variations:
             expected_image_id = str(uuid.uuid4())
             expected_s3_size = FIVE_KB
@@ -290,15 +450,17 @@ class TestStore(base.StoreBaseTest):
 
             self.config(**new_conf)
             self.store = s3.Store(self.conf)
-            location, size, checksum, _ = self.store.add(expected_image_id,
-                                                         image_s3,
-                                                         expected_s3_size)
+            self.store.configure()
+            loc, size, checksum, _ = self.store.add(expected_image_id,
+                                                    image_s3,
+                                                    expected_s3_size)
 
-            self.assertEqual(expected_location, location)
+            self.assertEqual(expected_location, loc)
             self.assertEqual(expected_s3_size, size)
             self.assertEqual(expected_checksum, checksum)
 
-            loc = get_location_from_uri(expected_location)
+            loc = location.get_location_from_uri(expected_location,
+                                                 conf=self.conf)
             (new_image_s3, new_image_size) = self.store.get(loc)
             new_image_contents = new_image_s3.getvalue()
             new_image_s3_size = len(new_image_s3)
@@ -323,6 +485,7 @@ class TestStore(base.StoreBaseTest):
         try:
             self.config(**conf)
             self.store = s3.Store(self.conf)
+            self.store.configure()
             return self.store.add == self.store.add_disabled
         except Exception:
             return False
@@ -351,7 +514,7 @@ class TestStore(base.StoreBaseTest):
         Test we can delete an existing image in the s3 store
         """
         uri = "s3://user:key@auth_address/glance/%s" % FAKE_UUID
-        loc = get_location_from_uri(uri)
+        loc = location.get_location_from_uri(uri, conf=self.conf)
         self.store.delete(loc)
 
         self.assertRaises(exceptions.NotFound, self.store.get, loc)
@@ -362,7 +525,7 @@ class TestStore(base.StoreBaseTest):
         raises an error
         """
         uri = "s3://user:key@auth_address/glance/noexist"
-        loc = get_location_from_uri(uri)
+        loc = location.get_location_from_uri(uri, conf=self.conf)
         self.assertRaises(exceptions.NotFound, self.store.delete, loc)
 
     def _do_test_get_s3_location(self, host, loc):

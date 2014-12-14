@@ -143,19 +143,22 @@ class MockRBD(object):
 
 class TestStore(base.StoreBaseTest):
     def setUp(self):
-        """Establish a clean test environment"""
+        """Establish a clean test environment."""
         super(TestStore, self).setUp()
 
         rbd_store.rados = MockRados
         rbd_store.rbd = MockRBD
 
         self.store = rbd_store.Store(self.conf)
+        self.store.configure()
         self.store.chunk_size = 2
         self.called_commands_actual = []
         self.called_commands_expected = []
-        self.store_specs = {'image': 'fake_image',
+        self.store_specs = {'pool': 'fake_pool',
+                            'image': 'fake_image',
                             'snapshot': 'fake_snapshot'}
-        self.location = rbd_store.StoreLocation(self.store_specs)
+        self.location = rbd_store.StoreLocation(self.store_specs,
+                                                self.conf)
         # Provide enough data to get more than one chunk iteration.
         self.data_len = 3 * 1024
         self.data_iter = StringIO.StringIO('*' * self.data_len)
@@ -216,7 +219,8 @@ class TestStore(base.StoreBaseTest):
 
             self.store.delete(Location('test_rbd_store',
                                        rbd_store.StoreLocation,
-                                       self.location.get_uri()))
+                                       self.conf,
+                                       uri=self.location.get_uri()))
             self.called_commands_expected = ['remove']
 
     def test_delete_image(self):
@@ -226,7 +230,7 @@ class TestStore(base.StoreBaseTest):
         with mock.patch.object(MockRBD.RBD, 'remove') as remove_image:
             remove_image.side_effect = _fake_remove
 
-            self.store._delete_image(self.location)
+            self.store._delete_image('fake_pool', self.location)
             self.called_commands_expected = ['remove']
 
     @mock.patch.object(MockRBD.RBD, 'remove')
@@ -245,7 +249,8 @@ class TestStore(base.StoreBaseTest):
         remove.side_effect = _fake_remove
         unprotect.side_effect = _fake_unprotect_snap
         remove_snap.side_effect = _fake_remove_snap
-        self.store._delete_image(self.location, snapshot_name='snap')
+        self.store._delete_image('fake_pool', self.location,
+                                 snapshot_name='snap')
 
         self.called_commands_expected = ['unprotect_snap', 'remove_snap',
                                          'remove']
@@ -259,7 +264,7 @@ class TestStore(base.StoreBaseTest):
             mocked.side_effect = _fake_unprotect_snap
 
             self.assertRaises(exceptions.NotFound, self.store._delete_image,
-                              self.location, snapshot_name='snap')
+                              'fake_pool', self.location, snapshot_name='snap')
 
             self.called_commands_expected = ['unprotect_snap']
 
@@ -271,7 +276,7 @@ class TestStore(base.StoreBaseTest):
         with mock.patch.object(MockRBD.RBD, 'remove') as remove:
             remove.side_effect = _fake_remove
             self.assertRaises(exceptions.NotFound, self.store._delete_image,
-                              self.location, snapshot_name='snap')
+                              'fake_pool', self.location, snapshot_name='snap')
 
             self.called_commands_expected = ['remove']
 

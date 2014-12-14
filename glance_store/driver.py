@@ -19,25 +19,13 @@
 import logging
 
 from oslo.config import cfg
+from oslo.utils import importutils
 
+from glance_store.common import utils
 from glance_store import exceptions
 from glance_store.i18n import _
-from glance_store.openstack.common import importutils
-from glance_store.openstack.common import strutils
 
 LOG = logging.getLogger(__name__)
-
-
-def _exception_to_unicode(exc):
-    try:
-        return unicode(exc)
-    except UnicodeError:
-        try:
-            return strutils.safe_decode(str(exc), errors='ignore')
-        except UnicodeError:
-            msg = (_("Caught '%(exception)s' exception.") %
-                   {"exception": exc.__class__.__name__})
-            return strutils.safe_decode(msg, errors='ignore')
 
 
 class Store(object):
@@ -65,8 +53,6 @@ class Store(object):
         except cfg.DuplicateOptError:
             pass
 
-        self.configure()
-
     def configure(self):
         """
         Configure the Store to use the stored configuration options
@@ -81,7 +67,7 @@ class Store(object):
             self._add = self.add
             self.add = self.add_disabled
             msg = (_(u"Failed to configure store correctly: %s "
-                     "Disabling add method.") % _exception_to_unicode(e))
+                     "Disabling add method.") % utils.exception_to_str(e))
             LOG.warn(msg)
 
     def get_schemes(self):
@@ -109,13 +95,6 @@ class Store(object):
         itself, it should raise `exceptions.BadStoreConfiguration`.
         """
         # NOTE(flaper87): This should probably go away
-
-    def validate_location(self, location):
-        """
-        Takes a location and validates it for the presence
-        of any account references
-        """
-        pass
 
     def get(self, location, offset=0, chunk_size=None, context=None):
         """
