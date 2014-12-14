@@ -1,6 +1,7 @@
 python-glance-store (0.1.10-1) unstable; urgency=medium
 
   * New upstream release.
+  * Drops fix-tests.patch as it was applied upstream.
 
  -- Thomas Goirand <zigo@debian.org>  Sun, 14 Dec 2014 09:07:56 +0000
 
