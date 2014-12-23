@@ -1,6 +1,7 @@
 python-glance-store (0.1.10-2) experimental; urgency=medium
 
   * Allow unit tests to fail.
+  * Added ordereddict to pydistoverrides.
 
  -- Thomas Goirand <zigo@debian.org>  Mon, 15 Dec 2014 17:06:40 +0800
 
