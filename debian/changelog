@@ -1,3 +1,9 @@
+python-glance-store (0.3.0-1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+
+ -- Thomas Goirand <zigo@debian.org>  Wed, 18 Mar 2015 13:49:47 +0100
+
 python-glance-store (0.1.10-2) experimental; urgency=medium
 
   * Allow unit tests to fail.
