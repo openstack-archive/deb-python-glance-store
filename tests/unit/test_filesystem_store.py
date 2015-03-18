@@ -26,20 +26,21 @@ import StringIO
 import uuid
 
 import fixtures
-from oslo.utils import units
+from oslo_utils import units
 import six
+# NOTE(jokke): simplified transition to py3, behaves like py2 xrange
+from six.moves import range
 
 from glance_store._drivers.filesystem import ChunkedFile
 from glance_store._drivers.filesystem import Store
 from glance_store import exceptions
 from glance_store import location
 from glance_store.tests import base
+from tests.unit import test_store_capabilities
 
 
-KB = 1024
-
-
-class TestStore(base.StoreBaseTest):
+class TestStore(base.StoreBaseTest,
+                test_store_capabilities.TestStoreCapabilitiesChecking):
 
     def setUp(self):
         """Establish a clean test environment."""
@@ -55,6 +56,25 @@ class TestStore(base.StoreBaseTest):
         """Clear the test environment."""
         super(TestStore, self).tearDown()
         ChunkedFile.CHUNKSIZE = self.orig_chunksize
+
+    def _create_metadata_json_file(self, metadata):
+        expected_image_id = str(uuid.uuid4())
+        jsonfilename = os.path.join(self.test_dir,
+                                    "storage_metadata.%s" % expected_image_id)
+
+        self.config(filesystem_store_metadata_file=jsonfilename,
+                    group="glance_store")
+        with open(jsonfilename, 'w') as fptr:
+            json.dump(metadata, fptr)
+
+    def _store_image(self, in_metadata):
+        expected_image_id = str(uuid.uuid4())
+        expected_file_size = 10
+        expected_file_contents = "*" * expected_file_size
+        image_file = StringIO.StringIO(expected_file_contents)
+        self.store.FILESYSTEM_STORE_METADATA = in_metadata
+        return self.store.add(expected_image_id, image_file,
+                              expected_file_size)
 
     def test_get(self):
         """Test a "normal" retrieval of an image in chunks."""
@@ -132,9 +152,9 @@ class TestStore(base.StoreBaseTest):
 
     def test_add(self):
         """Test that we can add an image via the filesystem backend."""
-        ChunkedFile.CHUNKSIZE = 1024
+        ChunkedFile.CHUNKSIZE = units.Ki
         expected_image_id = str(uuid.uuid4())
-        expected_file_size = 5 * KB  # 5K
+        expected_file_size = 5 * units.Ki  # 5K
         expected_file_contents = "*" * expected_file_size
         expected_checksum = hashlib.md5(expected_file_contents).hexdigest()
         expected_location = "file://%s/%s" % (self.test_dir,
@@ -162,45 +182,23 @@ class TestStore(base.StoreBaseTest):
         self.assertEqual(expected_file_contents, new_image_contents)
         self.assertEqual(expected_file_size, new_image_file_size)
 
-    def test_add_check_metadata_success(self):
-        expected_image_id = str(uuid.uuid4())
-        in_metadata = {'akey': u'some value', 'list': [u'1', u'2', u'3']}
-        jsonfilename = os.path.join(self.test_dir,
-                                    "storage_metadata.%s" % expected_image_id)
+    def test_add_check_metadata_with_invalid_mountpoint_location(self):
+        in_metadata = [{'id': 'abcdefg',
+                       'mountpoint': '/xyz/images'}]
+        location, size, checksum, metadata = self._store_image(in_metadata)
+        self.assertEqual({}, metadata)
 
-        self.config(filesystem_store_metadata_file=jsonfilename,
-                    group="glance_store")
-        with open(jsonfilename, 'w') as fptr:
-            json.dump(in_metadata, fptr)
-        expected_file_size = 10
-        expected_file_contents = "*" * expected_file_size
-        image_file = StringIO.StringIO(expected_file_contents)
+    def test_add_check_metadata_list_with_invalid_mountpoint_locations(self):
+        in_metadata = [{'id': 'abcdefg', 'mountpoint': '/xyz/images'},
+                       {'id': 'xyz1234', 'mountpoint': '/pqr/images'}]
+        location, size, checksum, metadata = self._store_image(in_metadata)
+        self.assertEqual({}, metadata)
 
-        location, size, checksum, metadata = self.store.add(expected_image_id,
-                                                            image_file,
-                                                            expected_file_size)
-
-        self.assertEqual(metadata, in_metadata)
-
-    def test_add_check_metadata_bad_data(self):
-        expected_image_id = str(uuid.uuid4())
-        in_metadata = {'akey': 10}  # only unicode is allowed
-        jsonfilename = os.path.join(self.test_dir,
-                                    "storage_metadata.%s" % expected_image_id)
-
-        self.config(filesystem_store_metadata_file=jsonfilename,
-                    group="glance_store")
-        with open(jsonfilename, 'w') as fptr:
-            json.dump(in_metadata, fptr)
-        expected_file_size = 10
-        expected_file_contents = "*" * expected_file_size
-        image_file = StringIO.StringIO(expected_file_contents)
-
-        location, size, checksum, metadata = self.store.add(expected_image_id,
-                                                            image_file,
-                                                            expected_file_size)
-
-        self.assertEqual(metadata, {})
+    def test_add_check_metadata_list_with_valid_mountpoint_locations(self):
+        in_metadata = [{'id': 'abcdefg', 'mountpoint': '/tmp'},
+                       {'id': 'xyz1234', 'mountpoint': '/xyz'}]
+        location, size, checksum, metadata = self._store_image(in_metadata)
+        self.assertEqual(in_metadata[0], metadata)
 
     def test_add_check_metadata_bad_nosuch_file(self):
         expected_image_id = str(uuid.uuid4())
@@ -224,9 +222,9 @@ class TestStore(base.StoreBaseTest):
         Tests that adding an image with an existing identifier
         raises an appropriate exception
         """
-        ChunkedFile.CHUNKSIZE = 1024
+        ChunkedFile.CHUNKSIZE = units.Ki
         image_id = str(uuid.uuid4())
-        file_size = 5 * KB  # 5K
+        file_size = 5 * units.Ki  # 5K
         file_contents = "*" * file_size
         image_file = StringIO.StringIO(file_contents)
 
@@ -239,9 +237,9 @@ class TestStore(base.StoreBaseTest):
                           image_id, image_file, 0)
 
     def _do_test_add_write_failure(self, errno, exception):
-        ChunkedFile.CHUNKSIZE = 1024
+        ChunkedFile.CHUNKSIZE = units.Ki
         image_id = str(uuid.uuid4())
-        file_size = 5 * KB  # 5K
+        file_size = 5 * units.Ki  # 5K
         file_contents = "*" * file_size
         path = os.path.join(self.test_dir, image_id)
         image_file = StringIO.StringIO(file_contents)
@@ -290,9 +288,9 @@ class TestStore(base.StoreBaseTest):
         Tests the partial image file is cleaned up after a read
         failure.
         """
-        ChunkedFile.CHUNKSIZE = 1024
+        ChunkedFile.CHUNKSIZE = units.Ki
         image_id = str(uuid.uuid4())
-        file_size = 5 * KB  # 5K
+        file_size = 5 * units.Ki  # 5K
         file_contents = "*" * file_size
         path = os.path.join(self.test_dir, image_id)
         image_file = StringIO.StringIO(file_contents)
@@ -314,7 +312,7 @@ class TestStore(base.StoreBaseTest):
         """
         # First add an image
         image_id = str(uuid.uuid4())
-        file_size = 5 * KB  # 5K
+        file_size = 5 * units.Ki  # 5K
         file_contents = "*" * file_size
         image_file = StringIO.StringIO(file_contents)
 
@@ -360,6 +358,82 @@ class TestStore(base.StoreBaseTest):
         self.assertEqual(self.store.priority_data_map, expected_priority_map)
         self.assertEqual(self.store.priority_list, expected_priority_list)
 
+    def test_configure_add_with_metadata_file_success(self):
+        metadata = {'id': 'asdf1234',
+                    'mountpoint': '/tmp'}
+        self._create_metadata_json_file(metadata)
+        self.store.configure_add()
+        self.assertEqual([metadata], self.store.FILESYSTEM_STORE_METADATA)
+
+    def test_configure_add_check_metadata_list_of_dicts_success(self):
+        metadata = [{'id': 'abcdefg', 'mountpoint': '/xyz/images'},
+                    {'id': 'xyz1234', 'mountpoint': '/tmp/'}]
+        self._create_metadata_json_file(metadata)
+        self.store.configure_add()
+        self.assertEqual(metadata, self.store.FILESYSTEM_STORE_METADATA)
+
+    def test_configure_add_check_metadata_success_list_val_for_some_key(self):
+        metadata = {'akey': ['value1', 'value2'], 'id': 'asdf1234',
+                    'mountpoint': '/tmp'}
+        self._create_metadata_json_file(metadata)
+        self.store.configure_add()
+        self.assertEqual([metadata], self.store.FILESYSTEM_STORE_METADATA)
+
+    def test_configure_add_check_metadata_bad_data(self):
+        metadata = {'akey': 10, 'id': 'asdf1234',
+                    'mountpoint': '/tmp'}  # only unicode is allowed
+        self._create_metadata_json_file(metadata)
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store.configure_add)
+
+    def test_configure_add_check_metadata_with_no_id_or_mountpoint(self):
+        metadata = {'mountpoint': '/tmp'}
+        self._create_metadata_json_file(metadata)
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store.configure_add)
+
+        metadata = {'id': 'asdfg1234'}
+        self._create_metadata_json_file(metadata)
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store.configure_add)
+
+    def test_configure_add_check_metadata_id_or_mountpoint_is_not_string(self):
+        metadata = {'id': 10, 'mountpoint': '/tmp'}
+        self._create_metadata_json_file(metadata)
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store.configure_add)
+
+        metadata = {'id': 'asdf1234', 'mountpoint': 12345}
+        self._create_metadata_json_file(metadata)
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store.configure_add)
+
+    def test_configure_add_check_metadata_list_with_no_id_or_mountpoint(self):
+        metadata = [{'id': 'abcdefg', 'mountpoint': '/xyz/images'},
+                    {'mountpoint': '/pqr/images'}]
+        self._create_metadata_json_file(metadata)
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store.configure_add)
+
+        metadata = [{'id': 'abcdefg'},
+                    {'id': 'xyz1234', 'mountpoint': '/pqr/images'}]
+        self._create_metadata_json_file(metadata)
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store.configure_add)
+
+    def test_add_check_metadata_list_id_or_mountpoint_is_not_string(self):
+        metadata = [{'id': 'abcdefg', 'mountpoint': '/xyz/images'},
+                    {'id': 1234, 'mountpoint': '/pqr/images'}]
+        self._create_metadata_json_file(metadata)
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store.configure_add)
+
+        metadata = [{'id': 'abcdefg', 'mountpoint': 1234},
+                    {'id': 'xyz1234', 'mountpoint': '/pqr/images'}]
+        self._create_metadata_json_file(metadata)
+        self.assertRaises(exceptions.BadStoreConfiguration,
+                          self.store.configure_add)
+
     def test_configure_add_same_dir_multiple_times(self):
         """
         Tests BadStoreConfiguration exception is raised if same directory
@@ -391,7 +465,7 @@ class TestStore(base.StoreBaseTest):
         self.store.configure()
 
         """Test that we can add an image via the filesystem backend"""
-        ChunkedFile.CHUNKSIZE = 1024
+        ChunkedFile.CHUNKSIZE = units.Ki
         expected_image_id = str(uuid.uuid4())
         expected_file_size = 5 * units.Ki  # 5K
         expected_file_contents = "*" * expected_file_size
@@ -443,7 +517,7 @@ class TestStore(base.StoreBaseTest):
         with mock.patch.object(self.store, '_get_capacity_info') as capacity:
             capacity.return_value = 0
 
-            ChunkedFile.CHUNKSIZE = 1024
+            ChunkedFile.CHUNKSIZE = units.Ki
             expected_image_id = str(uuid.uuid4())
             expected_file_size = 5 * units.Ki  # 5K
             expected_file_contents = "*" * expected_file_size
@@ -496,7 +570,7 @@ class TestStore(base.StoreBaseTest):
 
         self.store.configure_add()
 
-        Store.WRITE_CHUNKSIZE = 1024
+        Store.WRITE_CHUNKSIZE = units.Ki
         expected_image_id = str(uuid.uuid4())
         expected_file_size = 5 * units.Ki  # 5K
         expected_file_contents = "*" * expected_file_size
@@ -537,7 +611,7 @@ class TestStore(base.StoreBaseTest):
 
         self.store.configure_add()
 
-        Store.WRITE_CHUNKSIZE = 1024
+        Store.WRITE_CHUNKSIZE = units.Ki
         expected_image_id = str(uuid.uuid4())
         expected_file_size = 5 * units.Ki  # 5K
         expected_file_contents = "*" * expected_file_size

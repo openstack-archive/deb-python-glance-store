@@ -18,7 +18,7 @@ import os
 import shutil
 
 import fixtures
-from oslo.config import cfg
+from oslo_config import cfg
 from oslotest import base
 
 import glance_store as store
@@ -27,7 +27,7 @@ from glance_store import location
 
 class StoreBaseTest(base.BaseTestCase):
 
-    #NOTE(flaper87): temporary until we
+    # NOTE(flaper87): temporary until we
     # can move to a fully-local lib.
     # (Swift store's fault)
     _CONF = cfg.ConfigOpts()
@@ -68,14 +68,15 @@ class StoreBaseTest(base.BaseTestCase):
         for k, v in kw.iteritems():
             self.conf.set_override(k, v, group)
 
-    def register_store_schemes(self, store):
+    def register_store_schemes(self, store, store_entry):
         schemes = store.get_schemes()
         scheme_map = {}
 
+        loc_cls = store.get_store_location_class()
         for scheme in schemes:
-            loc_cls = store.get_store_location_class()
             scheme_map[scheme] = {
                 'store': store,
                 'location_class': loc_cls,
+                'store_entry': store_entry
             }
         location.register_scheme_map(scheme_map)

@@ -18,9 +18,11 @@ import logging
 import socket
 import urlparse
 
+from glance_store import capabilities
 import glance_store.driver
 from glance_store import exceptions
 from glance_store.i18n import _
+from glance_store.i18n import _LE
 import glance_store.location
 
 LOG = logging.getLogger(__name__)
@@ -110,6 +112,10 @@ class Store(glance_store.driver.Store):
 
     """An implementation of the HTTP(S) Backend Adapter"""
 
+    _CAPABILITIES = (capabilities.BitMasks.READ_ACCESS |
+                     capabilities.BitMasks.DRIVER_REUSABLE)
+
+    @capabilities.check
     def get(self, location, offset=0, chunk_size=None, context=None):
         """
         Takes a `glance_store.location.Location` object that indicates
@@ -119,7 +125,13 @@ class Store(glance_store.driver.Store):
         :param location `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
         """
-        conn, resp, content_length = self._query(location, 'GET')
+        try:
+            conn, resp, content_length = self._query(location, 'GET')
+        except socket.error:
+            reason = _LE("Remote server where the image is present "
+                         "is unavailable.")
+            LOG.error(reason)
+            raise exceptions.RemoteServiceUnavailable()
 
         cs = chunk_size or self.READ_CHUNKSIZE
         iterator = http_response_iterator(conn, resp, cs)
@@ -150,6 +162,8 @@ class Store(glance_store.driver.Store):
             reason = _("The HTTP URL is invalid.")
             LOG.info(reason)
             raise exceptions.BadStoreUri(message=reason)
+        except exceptions.NotFound:
+            raise
         except Exception:
             # NOTE(flaper87): Catch more granular exceptions,
             # keeping this branch for backwards compatibility.

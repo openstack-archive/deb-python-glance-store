@@ -19,16 +19,22 @@ import urlparse
 
 
 def sort_url_by_qs_keys(url):
-    #NOTE(kragniz): this only sorts the keys of the query string of a url.
+    # NOTE(kragniz): this only sorts the keys of the query string of a url.
     # For example, an input of '/v2/tasks?sort_key=id&sort_dir=asc&limit=10'
     # returns '/v2/tasks?limit=10&sort_dir=asc&sort_key=id'. This is to prevent
     # non-deterministic ordering of the query string causing problems with unit
     # tests.
     parsed = urlparse.urlparse(url)
-    queries = urlparse.parse_qsl(parsed.query, True)
+    # In python2.6, for arbitrary url schemes, query string
+    # is not parsed from url. http://bugs.python.org/issue9374
+    path = parsed.path
+    query = parsed.query
+    if not query:
+        path, query = parsed.path.split('?', 1)
+    queries = urlparse.parse_qsl(query, True)
     sorted_query = sorted(queries, key=lambda x: x[0])
     encoded_sorted_query = urllib.urlencode(sorted_query, True)
-    url_parts = (parsed.scheme, parsed.netloc, parsed.path,
+    url_parts = (parsed.scheme, parsed.netloc, path,
                  parsed.params, encoded_sorted_query,
                  parsed.fragment)
     return urlparse.urlunparse(url_parts)
@@ -41,6 +47,7 @@ class FakeHTTPResponse(object):
         self.read = self.data.read
         self.status = status
         self.headers = headers or {'content-length': len(data)}
+        self.body = None
 
     def getheader(self, name, default=None):
         return self.headers.get(name.lower(), default)

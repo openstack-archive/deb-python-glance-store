@@ -22,12 +22,15 @@ import math
 
 from oslo.config import cfg
 from oslo.utils import excutils
+from oslo_utils import units
+import six
 import six.moves.urllib.parse as urlparse
 import swiftclient
 import urllib
 
 import glance_store
 from glance_store._drivers.swift import utils as sutils
+from glance_store import capabilities
 from glance_store.common import auth
 from glance_store.common import utils as cutils
 from glance_store import driver
@@ -41,14 +44,11 @@ LOG = logging.getLogger(__name__)
 _LI = i18n._LI
 
 DEFAULT_CONTAINER = 'glance'
-DEFAULT_LARGE_OBJECT_SIZE = 5 * 1024  # 5GB
+DEFAULT_LARGE_OBJECT_SIZE = 5 * units.Ki  # 5GB
 DEFAULT_LARGE_OBJECT_CHUNK_SIZE = 200  # 200M
-ONE_MB = 1000 * 1024
+ONE_MB = units.k * units.Ki  # Here we used the mixed meaning of MB
 
 _SWIFT_OPTS = [
-    cfg.BoolOpt('swift_enable_snet', default=False,
-                help=_('Whether to use ServiceNET to communicate with the '
-                       'Swift storage servers.')),
     cfg.StrOpt('swift_store_auth_version', default='2',
                help=_('Version of the authentication service to use. '
                       'Valid versions are 2 for keystone and 1 for swauth '
@@ -56,10 +56,18 @@ _SWIFT_OPTS = [
     cfg.BoolOpt('swift_store_auth_insecure', default=False,
                 help=_('If True, swiftclient won\'t check for a valid SSL '
                        'certificate when authenticating.')),
+    cfg.StrOpt('swift_store_cacert',
+               help=_('A string giving the CA certificate file to use in '
+                      'SSL connections for verifying certs.')),
     cfg.StrOpt('swift_store_region',
                help=_('The region of the swift endpoint to be used for '
                       'single tenant. This setting is only necessary if the '
                       'tenant has multiple swift endpoints.')),
+    cfg.StrOpt('swift_store_endpoint',
+               default=None,
+               help=_('If set, the configured endpoint will be used. If '
+                      'None, the storage url from the auth response will be '
+                      'used.')),
     cfg.StrOpt('swift_store_endpoint_type', default='publicURL',
                help=_('A string giving the endpoint type of the swift '
                       'service to use (publicURL, adminURL or internalURL). '
@@ -72,7 +80,9 @@ _SWIFT_OPTS = [
     cfg.StrOpt('swift_store_container',
                default=DEFAULT_CONTAINER,
                help=_('Container within the account that the account should '
-                      'use for storing images in Swift.')),
+                      'use for storing images in Swift when using single '
+                      'container mode. In multiple container mode, this will '
+                      'be the prefix for all containers.')),
     cfg.IntOpt('swift_store_large_object_size',
                default=DEFAULT_LARGE_OBJECT_SIZE,
                help=_('The size, in MB, that Glance will start chunking image '
@@ -89,6 +99,18 @@ _SWIFT_OPTS = [
                 help=_('If set to True, enables multi-tenant storage '
                        'mode which causes Glance images to be stored in '
                        'tenant specific Swift accounts.')),
+    cfg.IntOpt('swift_store_multiple_containers_seed',
+               default=0,
+               help=_('When set to 0, a single-tenant store will only use one '
+                      'container to store all images. When set to an integer '
+                      'value between 1 and 32, a single-tenant store will use '
+                      'multiple containers to store images, and this value '
+                      'will determine how many containers are created.'
+                      'Used only when swift_store_multi_tenant is disabled. '
+                      'The total number of containers that will be used is '
+                      'equal to 16^N, so if this config option is set to 2, '
+                      'then 16^2=256 containers will be used to store images.'
+                      )),
     cfg.ListOpt('swift_store_admin_tenants', default=[],
                 help=_('A list of tenants that will be granted read/write '
                        'access on all Swift containers created by Glance in '
@@ -189,13 +211,13 @@ class StoreLocation(location.StoreLocation):
         obj = self.obj.strip('/')
 
         if not credentials_included:
-            #Used only in case of an add
-            #Get the current store from config
+            # Used only in case of an add
+            # Get the current store from config
             store = self.conf.glance_store.default_swift_reference
 
             return '%s://%s/%s/%s' % ('swift+config', store, container, obj)
         if self.scheme == 'swift+config':
-            if self.ssl_enabled == True:
+            if self.ssl_enabled:
                 self.scheme = 'swift+https'
             else:
                 self.scheme = 'swift+http'
@@ -327,7 +349,7 @@ class StoreLocation(location.StoreLocation):
             return self.auth_or_store_url
         else:
             if self.scheme == 'swift+config':
-                if self.ssl_enabled == True:
+                if self.ssl_enabled:
                     self.scheme = 'swift+https'
                 else:
                     self.scheme = 'swift+http'
@@ -353,8 +375,17 @@ def Store(conf):
 Store.OPTIONS = _SWIFT_OPTS + sutils.swift_opts
 
 
+def _is_slo(slo_header):
+    if (slo_header is not None and isinstance(slo_header, six.string_types)
+            and slo_header.lower() == 'true'):
+        return True
+
+    return False
+
+
 class BaseStore(driver.Store):
 
+    _CAPABILITIES = capabilities.BitMasks.RW_ACCESS
     CHUNKSIZE = 65536
     OPTIONS = _SWIFT_OPTS + sutils.swift_opts
 
@@ -370,10 +401,11 @@ class BaseStore(driver.Store):
         self.admin_tenants = glance_conf.swift_store_admin_tenants
         self.region = glance_conf.swift_store_region
         self.service_type = glance_conf.swift_store_service_type
+        self.conf_endpoint = glance_conf.swift_store_endpoint
         self.endpoint_type = glance_conf.swift_store_endpoint_type
-        self.snet = glance_conf.swift_enable_snet
         self.insecure = glance_conf.swift_store_auth_insecure
         self.ssl_compression = glance_conf.swift_store_ssl_compression
+        self.cacert = glance_conf.swift_store_cacert
         super(BaseStore, self).configure()
 
     def _get_object(self, location, connection=None, start=None, context=None):
@@ -398,6 +430,7 @@ class BaseStore(driver.Store):
 
         return (resp_headers, resp_body)
 
+    @capabilities.check
     def get(self, location, connection=None,
             offset=0, chunk_size=None, context=None):
         location = location.store_location
@@ -449,6 +482,7 @@ class BaseStore(driver.Store):
                 LOG.exception(msg % {'container': container,
                                      'chunk': chunk})
 
+    @capabilities.check
     def add(self, image_id, image_file, image_size,
             connection=None, context=None):
         location = self.create_location(image_id, context=context)
@@ -577,6 +611,7 @@ class BaseStore(driver.Store):
             LOG.error(msg)
             raise glance_store.BackendException(msg)
 
+    @capabilities.check
     def delete(self, location, connection=None, context=None):
         location = location.store_location
         if not connection:
@@ -587,17 +622,27 @@ class BaseStore(driver.Store):
             # that means the object was uploaded in chunks/segments,
             # and we need to delete all the chunks as well as the
             # manifest.
-            manifest = None
+            dlo_manifest = None
+            slo_manifest = None
             try:
                 headers = connection.head_object(
                     location.container, location.obj)
-                manifest = headers.get('x-object-manifest')
+                dlo_manifest = headers.get('x-object-manifest')
+                slo_manifest = headers.get('x-static-large-object')
             except swiftclient.ClientException as e:
                 if e.http_status != httplib.NOT_FOUND:
                     raise
-            if manifest:
+
+            if _is_slo(slo_manifest):
+                # Delete the manifest as well as the segments
+                query_string = 'multipart-manifest=delete'
+                connection.delete_object(location.container, location.obj,
+                                         query_string=query_string)
+                return
+
+            if dlo_manifest:
                 # Delete all the chunks before the object manifest itself
-                obj_container, obj_prefix = manifest.split('/', 1)
+                obj_container, obj_prefix = dlo_manifest.split('/', 1)
                 segments = connection.get_container(
                     obj_container, prefix=obj_prefix)[1]
                 for segment in segments:
@@ -649,7 +694,7 @@ class BaseStore(driver.Store):
                 else:
                     msg = (_("The container %(container)s does not exist in "
                              "Swift. Please set the "
-                             "swift_store_create_container_on_put option"
+                             "swift_store_create_container_on_put option "
                              "to add container to Swift automatically.") %
                            {'container': container})
                     raise glance_store.BackendException(msg)
@@ -699,13 +744,50 @@ class SingleTenantStore(BaseStore):
                                                    reason=reason)
 
     def create_location(self, image_id, context=None):
+        container_name = self.get_container_name(image_id, self.container)
         specs = {'scheme': self.scheme,
-                 'container': self.container,
+                 'container': container_name,
                  'obj': str(image_id),
                  'auth_or_store_url': self.auth_address,
                  'user': self.user,
                  'key': self.key}
         return StoreLocation(specs, self.conf)
+
+    def get_container_name(self, image_id, default_image_container):
+        """
+        Returns appropriate container name depending upon value of
+        ``swift_store_multiple_containers_seed``. In single-container mode,
+        which is a seed value of 0, simply returns default_image_container.
+        In multiple-container mode, returns default_image_container as the
+        prefix plus a suffix determined by the multiple container seed
+
+        examples:
+            single-container mode:  'glance'
+            multiple-container mode: 'glance_3a1' for image uuid 3A1xxxxxxx...
+
+        :param image_id: UUID of image
+        :param default_image_container: container name from
+               ``swift_store_container``
+        """
+        seed_num_chars = \
+            self.conf.glance_store.swift_store_multiple_containers_seed
+        if seed_num_chars is None \
+                or seed_num_chars < 0 or seed_num_chars > 32:
+            reason = _("An integer value between 0 and 32 is required for"
+                       " swift_store_multiple_containers_seed.")
+            LOG.error(reason)
+            raise exceptions.BadStoreConfiguration(store_name="swift",
+                                                   reason=reason)
+        elif seed_num_chars > 0:
+            image_id = str(image_id).lower()
+
+            num_dashes = image_id[:seed_num_chars].count('-')
+            num_chars = seed_num_chars + num_dashes
+            name_suffix = image_id[:num_chars]
+            new_container_name = default_image_container + '_' + name_suffix
+            return new_container_name
+        else:
+            return default_image_container
 
     def get_connection(self, location, context=None):
         if not location.user:
@@ -736,10 +818,10 @@ class SingleTenantStore(BaseStore):
         os_options['service_type'] = self.service_type
 
         return swiftclient.Connection(
-            auth_url, user, location.key, insecure=self.insecure,
-            tenant_name=tenant_name, snet=self.snet,
+            auth_url, user, location.key, preauthurl=self.conf_endpoint,
+            insecure=self.insecure, tenant_name=tenant_name,
             auth_version=self.auth_version, os_options=os_options,
-            ssl_compression=self.ssl_compression)
+            ssl_compression=self.ssl_compression, cacert=self.cacert)
 
 
 class MultiTenantStore(BaseStore):
@@ -756,9 +838,12 @@ class MultiTenantStore(BaseStore):
                        "a service catalog.")
             raise exceptions.BadStoreConfiguration(store_name="swift",
                                                    reason=reason)
-        self.storage_url = auth.get_endpoint(
-            context.service_catalog, service_type=self.service_type,
-            endpoint_region=self.region, endpoint_type=self.endpoint_type)
+        self.storage_url = self.conf_endpoint
+        if not self.storage_url:
+            self.storage_url = auth.get_endpoint(
+                context.service_catalog, service_type=self.service_type,
+                endpoint_region=self.region, endpoint_type=self.endpoint_type)
+
         if self.storage_url.startswith('http://'):
             self.scheme = 'swift+http'
         else:
@@ -823,8 +908,9 @@ class MultiTenantStore(BaseStore):
             preauthurl=location.swift_url,
             preauthtoken=context.auth_token,
             tenant_name=context.tenant,
-            auth_version='2', snet=self.snet, insecure=self.insecure,
-            ssl_compression=self.ssl_compression)
+            auth_version='2', insecure=self.insecure,
+            ssl_compression=self.ssl_compression,
+            cacert=self.cacert)
 
 
 class ChunkReader(object):

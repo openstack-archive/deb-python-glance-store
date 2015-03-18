@@ -19,6 +19,7 @@ from oslo.config import cfg
 from stevedore import driver
 from stevedore import extension
 
+from glance_store import capabilities
 from glance_store.common import utils
 from glance_store import exceptions
 from glance_store import i18n
@@ -30,20 +31,21 @@ LOG = logging.getLogger(__name__)
 
 _ = i18n._
 
-_DEPRECATED_STORE_OPTS = [
-    cfg.DeprecatedOpt('known_stores', group='DEFAULT'),
-    cfg.DeprecatedOpt('default_store', group='DEFAULT')
-]
-
 _STORE_OPTS = [
     cfg.ListOpt('stores', default=['file', 'http'],
-                help=_('List of stores enabled'),
-                deprecated_opts=[_DEPRECATED_STORE_OPTS[0]]),
+                help=_('List of stores enabled')),
     cfg.StrOpt('default_store', default='file',
                help=_("Default scheme to use to store image data. The "
                       "scheme must be registered by one of the stores "
-                      "defined by the 'stores' config option."),
-               deprecated_opts=[_DEPRECATED_STORE_OPTS[1]])
+                      "defined by the 'stores' config option.")),
+    cfg.IntOpt('store_capabilities_update_min_interval', default=0,
+               help=_("Minimum interval seconds to execute updating "
+                      "dynamic storage capabilities based on backend "
+                      "status then. It's not a periodic routine, the "
+                      "update logic will be executed only when interval "
+                      "seconds elapsed and an operation of store has "
+                      "triggered. The feature will be enabled only when "
+                      "the option value greater then zero."))
 ]
 
 _STORE_CFG_GROUP = 'glance_store'
@@ -59,13 +61,7 @@ def _list_opts():
         driver_cls = _load_store(None, store_entry, False)
         if driver_cls and driver_cls not in handled_drivers:
             if getattr(driver_cls, 'OPTIONS', None) is not None:
-                # NOTE(flaper87): To be removed in k-2. This should
-                # give deployers enough time to migrate their systems
-                # and move configs under the new section.
-                for opt in driver_cls.OPTIONS:
-                    opt.deprecated_opts = [cfg.DeprecatedOpt(opt.name,
-                                                             group='DEFAULT')]
-                    driver_opts.append(opt)
+                driver_opts += driver_cls.OPTIONS
             handled_drivers.append(driver_cls)
 
     # NOTE(zhiyan): This separated approach could list
@@ -155,9 +151,9 @@ def _load_store(conf, store_entry, invoke_load=True):
                                    invoke_args=[conf],
                                    invoke_on_load=invoke_load)
         return mgr.driver
-    except RuntimeError:
+    except RuntimeError as e:
         LOG.warn("Failed to load driver %(driver)s."
-                 "The driver will be disabled" % dict(driver=driver))
+                 "The driver will be disabled" % dict(driver=str([driver, e])))
 
 
 def _load_stores(conf):
@@ -199,11 +195,12 @@ def create_stores(conf=CONF):
                       store_entry, schemes)
 
             scheme_map = {}
+            loc_cls = store_instance.get_store_location_class()
             for scheme in schemes:
-                loc_cls = store_instance.get_store_location_class()
                 scheme_map[scheme] = {
                     'store': store_instance,
                     'location_class': loc_cls,
+                    'store_entry': store_entry
                 }
             location.register_scheme_map(scheme_map)
             store_count += 1
@@ -233,7 +230,26 @@ def get_store_from_scheme(scheme):
     if scheme not in location.SCHEME_TO_CLS_MAP:
         raise exceptions.UnknownScheme(scheme=scheme)
     scheme_info = location.SCHEME_TO_CLS_MAP[scheme]
-    return scheme_info['store']
+    store = scheme_info['store']
+    if not store.is_capable(capabilities.BitMasks.DRIVER_REUSABLE):
+        # Driver instance isn't stateless so it can't
+        # be reused safely and need recreation.
+        store_entry = scheme_info['store_entry']
+        store = _load_store(store.conf, store_entry, invoke_load=True)
+        store.configure()
+        try:
+            scheme_map = {}
+            loc_cls = store.get_store_location_class()
+            for scheme in store.get_schemes():
+                scheme_map[scheme] = {
+                    'store': store,
+                    'location_class': loc_cls,
+                    'store_entry': store_entry
+                }
+                location.register_scheme_map(scheme_map)
+        except NotImplementedError:
+            scheme_info['store'] = store
+    return store
 
 
 def get_store_from_uri(uri):
@@ -253,12 +269,9 @@ def get_from_backend(uri, offset=0, chunk_size=None, context=None):
     loc = location.get_location_from_uri(uri, conf=CONF)
     store = get_store_from_uri(uri)
 
-    try:
-        return store.get(loc, offset=offset,
-                         chunk_size=chunk_size,
-                         context=context)
-    except NotImplementedError:
-        raise exceptions.StoreGetNotSupported
+    return store.get(loc, offset=offset,
+                     chunk_size=chunk_size,
+                     context=context)
 
 
 def get_size_from_backend(uri, context=None):
@@ -266,7 +279,6 @@ def get_size_from_backend(uri, context=None):
 
     loc = location.get_location_from_uri(uri, conf=CONF)
     store = get_store_from_uri(uri)
-
     return store.get_size(loc, context=context)
 
 
@@ -275,11 +287,7 @@ def delete_from_backend(uri, context=None):
 
     loc = location.get_location_from_uri(uri, conf=CONF)
     store = get_store_from_uri(uri)
-
-    try:
-        return store.delete(loc, context=context)
-    except NotImplementedError:
-        raise exceptions.StoreDeleteNotSupported
+    return store.delete(loc, context=context)
 
 
 def get_store_from_location(uri):
@@ -353,10 +361,7 @@ def add_to_backend(conf, image_id, data, size, scheme=None, context=None):
     if scheme is None:
         scheme = conf['glance_store']['default_store']
     store = get_store_from_scheme(scheme)
-    try:
-        return store_add_to_backend(image_id, data, size, store, context)
-    except NotImplementedError:
-        raise exceptions.StoreAddNotSupported
+    return store_add_to_backend(image_id, data, size, store, context)
 
 
 def set_acls(location_uri, public=False, read_tenants=[],

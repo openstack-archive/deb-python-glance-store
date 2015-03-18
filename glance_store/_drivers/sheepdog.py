@@ -18,16 +18,17 @@
 import hashlib
 import logging
 
-from oslo.config import cfg
-from oslo.utils import excutils
-from oslo.utils import units
+from oslo_concurrency import processutils
+from oslo_config import cfg
+from oslo_utils import excutils
+from oslo_utils import units
 
 import glance_store
+from glance_store import capabilities
 import glance_store.driver
 from glance_store import exceptions
 from glance_store.i18n import _
 import glance_store.location
-from glance_store.openstack.common import processutils
 
 
 LOG = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ _SHEEPDOG_OPTS = [
 ]
 
 
-class SheepdogImage:
+class SheepdogImage(object):
     """Class describing an image stored in Sheepdog storage."""
 
     def __init__(self, addr, port, name, chunk_size):
@@ -173,6 +174,8 @@ class ImageIterator(object):
 class Store(glance_store.driver.Store):
     """Sheepdog backend adapter."""
 
+    _CAPABILITIES = (capabilities.BitMasks.RW_ACCESS |
+                     capabilities.BitMasks.DRIVER_REUSABLE)
     OPTIONS = _SHEEPDOG_OPTS
     EXAMPLE_URL = "sheepdog://image"
 
@@ -209,6 +212,7 @@ class Store(glance_store.driver.Store):
             raise exceptions.BadStoreConfiguration(store_name='sheepdog',
                                                    reason=reason)
 
+    @capabilities.check
     def get(self, location, offset=0, chunk_size=None, context=None):
         """
         Takes a `glance_store.location.Location` object that indicates
@@ -247,6 +251,7 @@ class Store(glance_store.driver.Store):
                                       % image.name)
         return image.get_size()
 
+    @capabilities.check
     def add(self, image_id, image_file, image_size, context=None):
         """
         Stores an image file with supplied identifier to the backend
@@ -289,6 +294,7 @@ class Store(glance_store.driver.Store):
 
         return (location.get_uri(), image_size, checksum.hexdigest(), {})
 
+    @capabilities.check
     def delete(self, location, context=None):
         """
         Takes a `glance_store.location.Location` object that indicates

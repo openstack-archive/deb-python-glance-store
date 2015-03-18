@@ -21,13 +21,22 @@ import logging
 import os
 import socket
 
-from oslo.config import cfg
-from oslo.utils import excutils
-from oslo.utils import units
-from oslo.vmware import api
+from oslo_config import cfg
+from oslo_utils import excutils
+from oslo_utils import units
+from oslo_vmware import api
+from oslo_vmware import constants
+from oslo_vmware.objects import datacenter as oslo_datacenter
+from oslo_vmware.objects import datastore as oslo_datastore
+from oslo_vmware import vim_util
+
+import six
+# NOTE(jokke): simplified transition to py3, behaves like py2 xrange
+from six.moves import range
 import six.moves.urllib.parse as urlparse
 
 import glance_store
+from glance_store import capabilities
 from glance_store import exceptions
 from glance_store.i18n import _
 from glance_store.i18n import _LE
@@ -38,7 +47,6 @@ LOG = logging.getLogger(__name__)
 
 MAX_REDIRECTS = 5
 DEFAULT_STORE_IMAGE_DIR = '/openstack_glance'
-DEFAULT_ESX_DATACENTER_PATH = 'ha-datacenter'
 DS_URL_PREFIX = '/folder'
 STORE_SCHEME = 'vsphere'
 
@@ -57,13 +65,20 @@ _VMWARE_OPTS = [
                       'VMware ESX/VC server.'),
                secret=True),
     cfg.StrOpt('vmware_datacenter_path',
-               default=DEFAULT_ESX_DATACENTER_PATH,
-               help=_('Inventory path to a datacenter. '
+               default=constants.ESX_DATACENTER_PATH,
+               help=_('DEPRECATED. Inventory path to a datacenter. '
                       'If the vmware_server_host specified is an ESX/ESXi, '
                       'the vmware_datacenter_path is optional. If specified, '
-                      'it should be "ha-datacenter".')),
+                      'it should be "ha-datacenter". This option is '
+                      'deprecated in favor of vmware_datastores and will be '
+                      'removed in the Liberty release.'),
+               deprecated_for_removal=True),
     cfg.StrOpt('vmware_datastore_name',
-               help=_('Datastore associated with the datacenter.')),
+               help=_('DEPRECATED. Datastore associated with the datacenter. '
+                      'This option is deprecated in favor of '
+                      'vmware_datastores and will be removed in the Liberty '
+                      'release.'),
+               deprecated_for_removal=True),
     cfg.IntOpt('vmware_api_retry_count',
                default=10,
                help=_('Number of times VMware ESX/VC server API must be '
@@ -79,7 +94,14 @@ _VMWARE_OPTS = [
     cfg.BoolOpt('vmware_api_insecure',
                 default=False,
                 help=_('Allow to perform insecure SSL requests to ESX/VC.')),
-]
+    cfg.MultiStrOpt('vmware_datastores',
+                    help=_('The datastores where the images are stored inside '
+                           'vCenter. The expected format is '
+                           'datacenter_path:datastore_name:weight. The weight '
+                           'will be used unless there is not enough free '
+                           'space to store the image. If the weights are '
+                           'equal, the datastore with most free space '
+                           'is chosen.'))]
 
 
 def is_valid_ipv6(address):
@@ -118,15 +140,6 @@ class _Reader(object):
         self._size += len(result)
         self.checksum.update(result)
         return result
-
-    def rewind(self):
-        try:
-            self.data.seek(0)
-            self._size = 0
-            self.checksum = hashlib.md5()
-        except IOError:
-            with excutils.save_and_reraise_exception():
-                LOG.exception(_LE('Failed to rewind image content'))
 
     @property
     def size(self):
@@ -176,18 +189,22 @@ class StoreLocation(location.StoreLocation):
     vsphere://server_host/folder/file_path?dcPath=dc_path&dsName=ds_name
     """
 
+    def __init__(self, store_specs, conf):
+        super(StoreLocation, self).__init__(store_specs, conf)
+        self.datacenter_path = None
+        self.datastore_name = None
+
     def process_specs(self):
         self.scheme = self.specs.get('scheme', STORE_SCHEME)
         self.server_host = self.specs.get('server_host')
         self.path = os.path.join(DS_URL_PREFIX,
                                  self.specs.get('image_dir').strip('/'),
                                  self.specs.get('image_id'))
-        dc_path = self.specs.get('datacenter_path')
-        if dc_path is not None:
-            param_list = {'dcPath': self.specs.get('datacenter_path'),
-                          'dsName': self.specs.get('datastore_name')}
-        else:
-            param_list = {'dsName': self.specs.get('datastore_name')}
+        self.datacenter_path = self.specs.get('datacenter_path')
+        self.datstore_name = self.specs.get('datastore_name')
+        param_list = {'dsName': self.datstore_name}
+        if self.datacenter_path:
+            param_list['dcPath'] = self.datacenter_path
         self.query = urlparse.urlencode(param_list)
 
     def get_uri(self):
@@ -224,13 +241,37 @@ class StoreLocation(location.StoreLocation):
         # reason = 'Badly formed VMware datastore URI %(uri)s.' % {'uri': uri}
         # LOG.debug(reason)
         # raise exceptions.BadStoreUri(reason)
+        parts = urlparse.parse_qs(self.query)
+        dc_path = parts.get('dcPath')
+        if dc_path:
+            self.datacenter_path = dc_path[0]
+        ds_name = parts.get('dsName')
+        if ds_name:
+            self.datastore_name = ds_name[0]
 
 
 class Store(glance_store.Store):
     """An implementation of the VMware datastore adapter."""
 
+    _CAPABILITIES = (capabilities.BitMasks.RW_ACCESS |
+                     capabilities.BitMasks.DRIVER_REUSABLE)
     OPTIONS = _VMWARE_OPTS
     WRITE_CHUNKSIZE = units.Mi
+    # FIXME(arnaud): re-visit this code once the store API is cleaned up.
+    _VMW_SESSION = None
+
+    def __init__(self, conf):
+        super(Store, self).__init__(conf)
+        self.datastores = {}
+
+    def reset_session(self, force=False):
+        if Store._VMW_SESSION is None or force:
+            Store._VMW_SESSION = api.VMwareAPISession(
+                self.server_host, self.server_username, self.server_password,
+                self.api_retry_count, self.tpoll_interval)
+        return Store._VMW_SESSION
+
+    session = property(reset_session)
 
     def get_schemes(self):
         return (STORE_SCHEME,)
@@ -241,17 +282,28 @@ class Store(glance_store.Store):
             LOG.error(msg)
             raise exceptions.BadStoreConfiguration(
                 store_name='vmware_datastore', reason=msg)
+
         if self.conf.glance_store.vmware_task_poll_interval <= 0:
             msg = _('vmware_task_poll_interval should be greater than zero')
             LOG.error(msg)
             raise exceptions.BadStoreConfiguration(
                 store_name='vmware_datastore', reason=msg)
 
-    def _create_session(self):
-        self._session = api.VMwareAPISession(
-            self.server_host, self.server_username, self.server_password,
-            self.api_retry_count, self.tpoll_interval)
-        self._service_content = self._session.vim.service_content
+        if not (self.conf.glance_store.vmware_datastore_name
+                or self.conf.glance_store.vmware_datastores):
+            msg = (_("Specify at least 'vmware_datastore_name' or "
+                     "'vmware_datastores' option"))
+            LOG.error(msg)
+            raise exceptions.BadStoreConfiguration(
+                store_name='vmware_datastore', reason=msg)
+
+        if (self.conf.glance_store.vmware_datastore_name and
+                self.conf.glance_store.vmware_datastores):
+            msg = (_("Specify either 'vmware_datastore_name' or "
+                     "'vmware_datastores' option"))
+            LOG.error(msg)
+            raise exceptions.BadStoreConfiguration(
+                store_name='vmware_datastore', reason=msg)
 
     def configure(self):
         self._sanity_check()
@@ -262,33 +314,123 @@ class Store(glance_store.Store):
         self.api_retry_count = self.conf.glance_store.vmware_api_retry_count
         self.tpoll_interval = self.conf.glance_store.vmware_task_poll_interval
         self.api_insecure = self.conf.glance_store.vmware_api_insecure
-        self._create_session()
         super(Store, self).configure()
 
-    def configure_add(self):
-        self.datacenter_path = self.conf.glance_store.vmware_datacenter_path
-        self.datastore_name = self._option_get('vmware_datastore_name')
-        global _datastore_info_valid
-        if not _datastore_info_valid:
-            search_index_moref = self._service_content.searchIndex
+    def _get_datacenter(self, datacenter_path):
+        search_index_moref = self.session.vim.service_content.searchIndex
+        dc_moref = self.session.invoke_api(
+            self.session.vim,
+            'FindByInventoryPath',
+            search_index_moref,
+            inventoryPath=datacenter_path)
+        dc_name = datacenter_path.rsplit('/', 1)[-1]
+        # TODO(sabari): Add datacenter_path attribute in oslo.vmware
+        dc_obj = oslo_datacenter.Datacenter(ref=dc_moref, name=dc_name)
+        dc_obj.path = datacenter_path
+        return dc_obj
 
-            inventory_path = ('%s/datastore/%s'
-                              % (self.datacenter_path, self.datastore_name))
-            ds_moref = self._session.invoke_api(self._session.vim,
-                                                'FindByInventoryPath',
-                                                search_index_moref,
-                                                inventoryPath=inventory_path)
-            if ds_moref is None:
+    def _get_datastore(self, datacenter_path, datastore_name):
+        dc_obj = self._get_datacenter(datacenter_path)
+        datastore_ret = self.session.invoke_api(
+            vim_util, 'get_object_property', self.session.vim, dc_obj.ref,
+            'datastore')
+        if datastore_ret:
+            datastore_refs = datastore_ret.ManagedObjectReference
+            for ds_ref in datastore_refs:
+                ds_obj = oslo_datastore.get_datastore_by_ref(self.session,
+                                                             ds_ref)
+                if ds_obj.name == datastore_name:
+                    ds_obj.datacenter = dc_obj
+                    return ds_obj
+
+    def _get_freespace(self, ds_obj):
+        # TODO(sabari): Move this function into oslo_vmware's datastore object.
+        return self.session.invoke_api(
+            vim_util, 'get_object_property', self.session.vim, ds_obj.ref,
+            'summary.freeSpace')
+
+    def _parse_datastore_info_and_weight(self, datastore):
+        weight = 0
+        parts = map(lambda x: x.strip(), datastore.rsplit(":", 2))
+        if len(parts) < 2:
+            msg = _('vmware_datastores format must be '
+                    'datacenter_path:datastore_name:weight or '
+                    'datacenter_path:datastore_name')
+            LOG.error(msg)
+            raise exceptions.BadStoreConfiguration(
+                store_name='vmware_datastore', reason=msg)
+        if len(parts) == 3 and parts[2]:
+            weight = parts[2]
+            if not weight.isdigit():
+                msg = (_('Invalid weight value %(weight)s in '
+                         'vmware_datastores configuration') %
+                       {'weight': weight})
+                LOG.exception(msg)
+                raise exceptions.BadStoreConfiguration(
+                    store_name="vmware_datastore", reason=msg)
+        datacenter_path, datastore_name = parts[0], parts[1]
+        if not datacenter_path or not datastore_name:
+            msg = _('Invalid datacenter_path or datastore_name specified '
+                    'in vmware_datastores configuration')
+            LOG.exception(msg)
+            raise exceptions.BadStoreConfiguration(
+                store_name="vmware_datastore", reason=msg)
+        return datacenter_path, datastore_name, weight
+
+    def _build_datastore_weighted_map(self, datastores):
+        """Build an ordered map where the key is a weight and the value is a
+        Datastore object.
+
+        :param: a list of datastores in the format
+                datacenter_path:datastore_name:weight
+        :return: a map with key-value <weight>:<Datastore>
+        """
+        ds_map = {}
+        for ds in datastores:
+            dc_path, name, weight = self._parse_datastore_info_and_weight(ds)
+            # Fetch the server side reference.
+            ds_obj = self._get_datastore(dc_path, name)
+            if not ds_obj:
                 msg = (_("Could not find datastore %(ds_name)s "
                          "in datacenter %(dc_path)s")
-                       % {'ds_name': self.datastore_name,
-                          'dc_path': self.datacenter_path})
+                       % {'ds_name': name,
+                          'dc_path': dc_path})
                 LOG.error(msg)
                 raise exceptions.BadStoreConfiguration(
                     store_name='vmware_datastore', reason=msg)
-            else:
-                _datastore_info_valid = True
+            ds_map.setdefault(int(weight), []).append(ds_obj)
+        return ds_map
+
+    def configure_add(self):
+        if self.conf.glance_store.vmware_datastores:
+            datastores = self.conf.glance_store.vmware_datastores
+        else:
+            # Backwards compatibility for vmware_datastore_name and
+            # vmware_datacenter_path.
+            datacenter_path = self.conf.glance_store.vmware_datacenter_path
+            datastore_name = self._option_get('vmware_datastore_name')
+            datastores = ['%s:%s:%s' % (datacenter_path, datastore_name, 0)]
+
+        self.datastores = self._build_datastore_weighted_map(datastores)
         self.store_image_dir = self.conf.glance_store.vmware_store_image_dir
+
+    def select_datastore(self, image_size):
+        """Select a datastore with free space larger than image size."""
+        for k, v in sorted(six.iteritems(self.datastores), reverse=True):
+            max_ds = None
+            max_fs = 0
+            for ds in v:
+                # Update with current freespace
+                ds.freespace = self._get_freespace(ds)
+                if ds.freespace > max_fs:
+                    max_ds = ds
+                    max_fs = ds.freespace
+            if max_ds and max_ds.freespace >= image_size:
+                return max_ds
+        msg = _LE("No datastore found with enough free space to contain an "
+                  "image of size %d") % image_size
+        LOG.error(msg)
+        raise exceptions.StorageFull()
 
     def _option_get(self, param):
         result = getattr(self.conf.glance_store, param)
@@ -299,12 +441,16 @@ class Store(glance_store.Store):
                 store_name='vmware_datastore', reason=reason)
         return result
 
-    def _build_vim_cookie_header(self, vim_cookies):
+    def _build_vim_cookie_header(self, verify_session=False):
         """Build ESX host session cookie header."""
+        if verify_session and not self.session.is_current_session_active():
+            self.reset_session(force=True)
+        vim_cookies = self.session.vim.client.options.transport.cookiejar
         if len(list(vim_cookies)) > 0:
             cookie = list(vim_cookies)[0]
             return cookie.name + '=' + cookie.value
 
+    @capabilities.check
     def add(self, image_id, image_file, image_size, context=None):
         """Stores an image file with supplied identifier to the backend
         storage system and returns a tuple containing information
@@ -321,6 +467,7 @@ class Store(glance_store.Store):
                 request returned an unexpected status. The expected responses
                 are 201 Created and 200 OK.
         """
+        ds = self.select_datastore(image_size)
         if image_size > 0:
             headers = {'Content-Length': image_size}
             image_file = _Reader(image_file)
@@ -333,44 +480,54 @@ class Store(glance_store.Store):
         loc = StoreLocation({'scheme': self.scheme,
                              'server_host': self.server_host,
                              'image_dir': self.store_image_dir,
-                             'datacenter_path': self.datacenter_path,
-                             'datastore_name': self.datastore_name,
+                             'datacenter_path': ds.datacenter.path,
+                             'datastore_name': ds.name,
                              'image_id': image_id}, self.conf)
         # NOTE(arnaud): use a decorator when the config is not tied to self
-        for i in range(self.api_retry_count + 1):
-            cookie = self._build_vim_cookie_header(
-                self._session.vim.client.options.transport.cookiejar)
-            headers = dict(headers.items() + {'Cookie': cookie}.items())
-            try:
-                conn = self._get_http_conn('PUT', loc, headers,
-                                           content=image_file)
-                res = conn.getresponse()
-            except Exception:
-                with excutils.save_and_reraise_exception():
-                    LOG.exception(_LE('Failed to upload content of image '
-                                      '%(image)s'), {'image': image_id})
+        cookie = self._build_vim_cookie_header(True)
+        headers = dict(headers.items() + {'Cookie': cookie}.items())
+        conn_class = self._get_http_conn_class()
+        conn = conn_class(loc.server_host)
+        url = urlparse.quote('%s?%s' % (loc.path, loc.query))
+        try:
+            conn.request('PUT', url, image_file, headers)
+        except IOError as e:
+            # When a session is not authenticated, the socket is closed by
+            # the server after sending the response. httplib has an open
+            # issue with https that raises Broken Pipe
+            # error instead of returning the response.
+            # See http://bugs.python.org/issue16062. Here, we log the error
+            # and continue to look into the response.
+            msg = _LE('Communication error sending http %(method)s request'
+                      'to the url %(url)s.\n'
+                      'Got IOError %(e)s') % {'method': 'PUT',
+                                              'url': url,
+                                              'e': e}
+            LOG.error(msg)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.exception(_LE('Failed to upload content of image '
+                                  '%(image)s'), {'image': image_id})
+        res = conn.getresponse()
+        if res.status == httplib.CONFLICT:
+            raise exceptions.Duplicate(_("Image file %(image_id)s already "
+                                         "exists!") %
+                                       {'image_id': image_id})
 
-            if res.status == httplib.UNAUTHORIZED:
-                self._create_session()
-                image_file.rewind()
-                continue
-
-            if res.status == httplib.CONFLICT:
-                raise exceptions.Duplicate(_("Image file %(image_id)s already "
-                                             "exists!") %
-                                           {'image_id': image_id})
-
-            if res.status not in (httplib.CREATED, httplib.OK):
-                msg = (_LE('Failed to upload content of image %(image)s') %
-                       {'image': image_id})
-                LOG.error(msg)
-                raise exceptions.UnexpectedStatus(status=res.status,
-                                                  body=res.read())
-            break
+        if res.status not in (httplib.CREATED, httplib.OK):
+            msg = (_LE('Failed to upload content of image %(image)s. '
+                       'The request returned an unexpected status: %(status)s.'
+                       '\nThe response body:\n%(body)s') %
+                   {'image': image_id,
+                    'status': res.status,
+                    'body': res.body})
+            LOG.error(msg)
+            raise exceptions.BackendException(msg)
 
         return (loc.get_uri(), image_file.size,
                 image_file.checksum.hexdigest(), {})
 
+    @capabilities.check
     def get(self, location, offset=0, chunk_size=None, context=None):
         """Takes a `glance_store.location.Location` object that indicates
         where to find the image file, and returns a tuple of generator
@@ -401,6 +558,7 @@ class Store(glance_store.Store):
         """
         return self._query(location, 'HEAD')[2]
 
+    @capabilities.check
     def delete(self, location, context=None):
         """Takes a `glance_store.location.Location` object that indicates
         where to find the image file to delete
@@ -410,21 +568,17 @@ class Store(glance_store.Store):
         :raises NotFound if image does not exist
         """
         file_path = '[%s] %s' % (
-            self.datastore_name,
+            location.store_location.datastore_name,
             location.store_location.path[len(DS_URL_PREFIX):])
-        search_index_moref = self._service_content.searchIndex
-        dc_moref = self._session.invoke_api(self._session.vim,
-                                            'FindByInventoryPath',
-                                            search_index_moref,
-                                            inventoryPath=self.datacenter_path)
-        delete_task = self._session.invoke_api(
-            self._session.vim,
+        dc_obj = self._get_datacenter(location.store_location.datacenter_path)
+        delete_task = self.session.invoke_api(
+            self.session.vim,
             'DeleteDatastoreFile_Task',
-            self._service_content.fileManager,
+            self.session.vim.service_content.fileManager,
             name=file_path,
-            datacenter=dc_moref)
+            datacenter=dc_obj.ref)
         try:
-            self._session.wait_for_task(delete_task)
+            self.session.wait_for_task(delete_task)
         except Exception:
             with excutils.save_and_reraise_exception():
                 LOG.exception(_LE('Failed to delete image %(image)s '
@@ -439,8 +593,7 @@ class Store(glance_store.Store):
         loc = location.store_location
         # NOTE(arnaud): use a decorator when the config is not tied to self
         for i in range(self.api_retry_count + 1):
-            cookie = self._build_vim_cookie_header(
-                self._session.vim.client.options.transport.cookiejar)
+            cookie = self._build_vim_cookie_header()
             headers = {'Cookie': cookie}
             try:
                 conn = self._get_http_conn(method, loc, headers)
@@ -452,7 +605,7 @@ class Store(glance_store.Store):
                                                      location.image_id})
             if resp.status >= 400:
                 if resp.status == httplib.UNAUTHORIZED:
-                    self._create_session()
+                    self.reset_session(force=True)
                     continue
                 if resp.status == httplib.NOT_FOUND:
                     reason = _('VMware datastore could not find image at URI.')

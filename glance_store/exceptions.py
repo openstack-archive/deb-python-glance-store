@@ -46,9 +46,8 @@ class GlanceStoreException(Exception):
     message = ''
 
     def __init__(self, **kwargs):
-        msg = kwargs.pop('message', None)
-        self.msg = msg or self.message.format(**kwargs)
-        super(Exception, self).__init__(msg)
+        self.msg = kwargs.pop('message', None) or self.message % kwargs
+        super(Exception, self).__init__(self.msg)
 
 
 class MissingCredentialError(GlanceStoreException):
@@ -73,7 +72,7 @@ class UnknownScheme(GlanceStoreException):
 
 
 class BadStoreUri(GlanceStoreException):
-    message = _("The Store URI was malformed: %(uri)")
+    message = _("The Store URI was malformed: %(uri)s")
 
 
 class Duplicate(GlanceStoreException):
@@ -87,11 +86,6 @@ class Conflict(GlanceStoreException):
 
 class StorageFull(GlanceStoreException):
     message = _("There is not enough disk space on the image storage media.")
-
-
-class StorageQuotaFull(GlanceStoreException):
-    message = _("The size of the data %(image_size)s will exceed the limit. "
-                "%(remaining)s bytes remaining.")
 
 
 class StorageWriteDenied(GlanceStoreException):
@@ -152,8 +146,9 @@ class StoreGetNotSupported(GlanceStoreException):
     message = _("Getting images from this store is not supported.")
 
 
-class StoreAddNotSupported(GlanceStoreException):
-    message = _("Adding images to this store is not supported.")
+class StoreRandomGetNotSupported(StoreGetNotSupported):
+    message = _("Getting images randomly from this store is not supported. "
+                "Offset: %(offset)s, length: %(chunk_size)s")
 
 
 class StoreAddDisabled(GlanceStoreException):
@@ -177,6 +172,10 @@ class RegionAmbiguity(GlanceStoreException):
     message = _("Multiple 'image' service matches for region %(region)s. This "
                 "generally means that a region is required and you have not "
                 "supplied one.")
+
+
+class RemoteServiceUnavailable(GlanceStoreException):
+    message = _("Remote server where the image is present is unavailable.")
 
 
 class WorkerCreationFailure(GlanceStoreException):

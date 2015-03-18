@@ -23,8 +23,10 @@ import logging
 import math
 import urllib
 
-from oslo.config import cfg
+from oslo_config import cfg
+from oslo_utils import units
 
+from glance_store import capabilities
 from glance_store.common import utils
 from glance_store import driver
 from glance_store import exceptions
@@ -175,6 +177,7 @@ class ImageIterator(object):
 class Store(driver.Store):
     """An implementation of the RBD backend adapter."""
 
+    _CAPABILITIES = capabilities.BitMasks.RW_ACCESS
     OPTIONS = _RBD_OPTS
 
     EXAMPLE_URL = "rbd://<FSID>/<POOL>/<IMAGE>/<SNAP>"
@@ -191,7 +194,7 @@ class Store(driver.Store):
         """
         try:
             chunk = self.conf.glance_store.rbd_store_chunk_size
-            self.chunk_size = chunk * (1024 ** 2)
+            self.chunk_size = chunk * units.Mi
             self.READ_CHUNKSIZE = self.chunk_size
             self.WRITE_CHUNKSIZE = self.READ_CHUNKSIZE
 
@@ -206,6 +209,7 @@ class Store(driver.Store):
             raise exceptions.BadStoreConfiguration(store_name='rbd',
                                                    reason=reason)
 
+    @capabilities.check
     def get(self, location, offset=0, chunk_size=None, context=None):
         """
         Takes a `glance_store.location.Location` object that indicates
@@ -304,15 +308,15 @@ class Store(driver.Store):
                     # Then delete image.
                     rbd.RBD().remove(ioctx, image_name)
                 except rbd.ImageNotFound:
-                    raise exceptions.NotFound(message=
-                                              _("RBD image %s does not exist")
-                                              % image_name)
+                    msg = _("RBD image %s does not exist") % image_name
+                    raise exceptions.NotFound(message=msg)
                 except rbd.ImageBusy:
                     log_msg = _("image %s could not be removed "
                                 "because it is in use")
                     LOG.debug(log_msg % image_name)
                     raise exceptions.InUseByStore()
 
+    @capabilities.check
     def add(self, image_id, image_file, image_size, context=None):
         """
         Stores an image file with supplied identifier to the backend
@@ -347,9 +351,9 @@ class Store(driver.Store):
                     loc = self._create_image(fsid, ioctx, image_name,
                                              image_size, order)
                 except rbd.ImageExists:
-                    raise exceptions.Duplicate(message=
-                                               _('RBD image %s already exists')
-                                               % image_id)
+                    msg = _('RBD image %s already exists') % image_id
+                    raise exceptions.Duplicate(message=msg)
+
                 try:
                     with rbd.Image(ioctx, image_name) as image:
                         bytes_written = 0
@@ -366,7 +370,7 @@ class Store(driver.Store):
                                 length = offset + chunk_length
                                 bytes_written += chunk_length
                                 LOG.debug(_("resizing image to %s KiB") %
-                                          (length / 1024))
+                                          (length / units.Ki))
                                 image.resize(length)
                             LOG.debug(_("writing chunk at offset %s") %
                                       (offset))
@@ -390,6 +394,7 @@ class Store(driver.Store):
 
         return (loc.get_uri(), image_size, checksum.hexdigest(), {})
 
+    @capabilities.check
     def delete(self, location, context=None):
         """
         Takes a `glance_store.location.Location` object that indicates
