@@ -23,7 +23,6 @@ import re
 import tempfile
 import urlparse
 
-import boto.exception
 import eventlet
 from oslo_config import cfg
 from oslo_utils import netutils
@@ -103,6 +102,8 @@ def run_upload(part):
     Upload the upload part into S3 and set returned etag and size
     to its part info.
     """
+    # We defer importing boto until now since it is an optional dependency.
+    import boto.exception
     pnum = part.partnum
     bsize = part.chunks
     LOG.info(_LI("Uploading upload part in S3 partnum=%(pnum)d, "
@@ -378,7 +379,7 @@ class Store(glance_store.driver.Store):
         :raises `glance_store.exceptions.NotFound` if image does not exist
         """
         key = self._retrieve_key(location)
-        cs = chunk_size or self.READ_CHUNKSIZE
+        cs = self.READ_CHUNKSIZE
         key.BufferSize = cs
 
         class ChunkedIndexable(glance_store.Indexable):
