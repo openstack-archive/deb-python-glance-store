@@ -6,56 +6,54 @@ Uploaders: Thomas Goirand <zigo@debian.org>
 Build-Depends: debhelper (>= 9),
                dh-python,
                openstack-pkg-tools,
-               python-all (>= 2.6.6-3~),
+               python-all,
                python-pbr,
                python-setuptools,
                python-sphinx,
-Build-Depends-Indep: python-boto (>= 2.12.0),
-                     python-cinderclient (>= 1:1.0.6),
-                     python-coverage (>= 3.6),
+Build-Depends-Indep: python-boto,
+                     python-cinderclient,
+                     python-coverage,
                      python-enum34,
-                     python-eventlet (>= 0.13.0),
-                     python-fixtures (>= 0.3.14),
+                     python-eventlet,
+                     python-fixtures,
                      python-hacking,
-                     python-httplib2 (>= 0.7.5),
-                     python-jsonschema (>= 2.0.0),
-                     python-mock (>= 1.0),
-                     python-mox,
+                     python-httplib2,
+                     python-jsonschema,
+                     python-mock,
                      python-oslo.concurrency (>= 1.4.1),
-                     python-oslo.config (>= 1.6.0),
-                     python-oslo.i18n (>= 0.1.0),
+                     python-oslo.config (>= 1:1.6.0),
+                     python-oslo.i18n,
                      python-oslo.serialization (>= 1.0.0),
                      python-oslo.utils (>= 1.2.0),
-                     python-oslo.vmware (>= 0.4),
+                     python-oslo.vmware,
                      python-oslosphinx,
                      python-oslotest,
                      python-requests-mock (>= 0.5.1),
-                     python-six (>= 1.4.1),
-                     python-stevedore (>= 0.12),
-                     python-swiftclient (>= 2.0.2),
-                     python-testscenarios (>= 0.4),
-                     python-testtools (>= 0.9.34),
-                     subunit (>= 0.0.18),
-                     testrepository (>= 0.0.18),
-Standards-Version: 3.9.5
+                     python-six,
+                     python-stevedore,
+                     python-swiftclient,
+                     python-testscenarios,
+                     python-testtools,
+                     subunit,
+                     testrepository,
+Standards-Version: 3.9.6
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=openstack/python-glance-store.git
 Vcs-Git: git://anonscm.debian.org/openstack/python-glance-store.git
 Homepage: https://github.com/openstack/glance_store
 
 Package: python-glance-store
 Architecture: all
-Pre-Depends: dpkg (>= 1.15.6~)
-Depends: python-cinderclient (>= 1:1.0.6),
+Depends: python-cinderclient,
          python-enum34,
-         python-eventlet (>= 0.13.0),
-         python-jsonschema (>= 2.0.0),
+         python-eventlet,
+         python-jsonschema,
          python-oslo.concurrency (>= 1.4.1),
-         python-oslo.config (>= 1.6.0),
-         python-oslo.i18n (>= 0.1.0),
+         python-oslo.config (>= 1:1.6.0),
+         python-oslo.i18n,
          python-oslo.serialization (>= 1.0.0),
          python-oslo.utils (>= 1.2.0),
-         python-six (>= 1.4.1),
-         python-stevedore (>= 0.12),
+         python-six,
+         python-stevedore,
          ${misc:Depends},
          ${python:Depends},
 Description: OpenStack Image Service store library - Python 2.x
@@ -69,7 +67,6 @@ Description: OpenStack Image Service store library - Python 2.x
 Package: python-glance-store-doc
 Section: doc
 Architecture: all
-Pre-Depends: dpkg (>= 1.15.6~)
 Depends: ${misc:Depends}, ${sphinxdoc:Depends}
 Description: OpenStack Image Service store library - doc
  The Glance project provides services for discovering, registering, and
