@@ -1,3 +1,3 @@
 version=3
-http://pypi.python.org/packages/source/g/glance_store glance_store-(.*).tar.gz
-
+opts=uversionmangle=s/(rc|a|b|c)/~$1/ \
+http://pypi.debian.net/glance_store/glance_store-(.+)\.(?:zip|tgz|tbz|txz|(?:tar\.(?:gz|bz2|xz)))
