@@ -1,3 +1,9 @@
+python-glance-store (0.4.0-2) UNRELEASED; urgency=medium
+
+  * Ensure unit test failures fail the package build.
+
+ -- James Page <jamespage@debian.org>  Fri, 12 Jun 2015 09:53:01 +0100
+
 python-glance-store (0.4.0-1) unstable; urgency=medium
 
   * New upstream release.
