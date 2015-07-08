@@ -19,17 +19,19 @@ import hashlib
 import httplib
 import logging
 import os
-import socket
 
 from oslo_config import cfg
 from oslo_utils import excutils
+from oslo_utils import netutils
 from oslo_utils import units
-from oslo_vmware import api
-from oslo_vmware import constants
-import oslo_vmware.exceptions as vexc
-from oslo_vmware.objects import datacenter as oslo_datacenter
-from oslo_vmware.objects import datastore as oslo_datastore
-from oslo_vmware import vim_util
+try:
+    from oslo_vmware import api
+    import oslo_vmware.exceptions as vexc
+    from oslo_vmware.objects import datacenter as oslo_datacenter
+    from oslo_vmware.objects import datastore as oslo_datastore
+    from oslo_vmware import vim_util
+except ImportError:
+    api = None
 
 import six
 # NOTE(jokke): simplified transition to py3, behaves like py2 xrange
@@ -66,7 +68,7 @@ _VMWARE_OPTS = [
                       'VMware ESX/VC server.'),
                secret=True),
     cfg.StrOpt('vmware_datacenter_path',
-               default=constants.ESX_DATACENTER_PATH,
+               default='ha-datacenter',
                help=_('DEPRECATED. Inventory path to a datacenter. '
                       'If the vmware_server_host specified is an ESX/ESXi, '
                       'the vmware_datacenter_path is optional. If specified, '
@@ -113,14 +115,6 @@ _VMWARE_OPTS = [
             'considered for selection last. If multiple datastores have the '
             'same weight, then the one with the most free space available is '
             'selected.'))]
-
-
-def is_valid_ipv6(address):
-    try:
-        socket.inet_pton(socket.AF_INET6, address)
-        return True
-    except Exception:
-        return False
 
 
 def http_response_iterator(conn, response, size):
@@ -219,7 +213,7 @@ class StoreLocation(location.StoreLocation):
         self.query = urlparse.urlencode(param_list)
 
     def get_uri(self):
-        if is_valid_ipv6(self.server_host):
+        if netutils.is_valid_ipv6(self.server_host):
             base_url = '%s://[%s]%s' % (self.scheme,
                                         self.server_host, self.path)
         else:
@@ -268,21 +262,16 @@ class Store(glance_store.Store):
                      capabilities.BitMasks.DRIVER_REUSABLE)
     OPTIONS = _VMWARE_OPTS
     WRITE_CHUNKSIZE = units.Mi
-    # FIXME(arnaud): re-visit this code once the store API is cleaned up.
-    _VMW_SESSION = None
 
     def __init__(self, conf):
         super(Store, self).__init__(conf)
         self.datastores = {}
 
-    def reset_session(self, force=False):
-        if Store._VMW_SESSION is None or force:
-            Store._VMW_SESSION = api.VMwareAPISession(
-                self.server_host, self.server_username, self.server_password,
-                self.api_retry_count, self.tpoll_interval)
-        return Store._VMW_SESSION
-
-    session = property(reset_session)
+    def reset_session(self):
+        self.session = api.VMwareAPISession(
+            self.server_host, self.server_username, self.server_password,
+            self.api_retry_count, self.tpoll_interval)
+        return self.session
 
     def get_schemes(self):
         return (STORE_SCHEME,)
@@ -316,7 +305,7 @@ class Store(glance_store.Store):
             raise exceptions.BadStoreConfiguration(
                 store_name='vmware_datastore', reason=msg)
 
-    def configure(self):
+    def configure(self, re_raise_bsc=False):
         self._sanity_check()
         self.scheme = STORE_SCHEME
         self.server_host = self._option_get('vmware_server_host')
@@ -325,7 +314,12 @@ class Store(glance_store.Store):
         self.api_retry_count = self.conf.glance_store.vmware_api_retry_count
         self.tpoll_interval = self.conf.glance_store.vmware_task_poll_interval
         self.api_insecure = self.conf.glance_store.vmware_api_insecure
-        super(Store, self).configure()
+        if api is None:
+            msg = _("Missing dependencies: oslo_vmware")
+            raise exceptions.BadStoreConfiguration(
+                store_name="vmware_datastore", reason=msg)
+        self.session = self.reset_session()
+        super(Store, self).configure(re_raise_bsc=re_raise_bsc)
 
     def _get_datacenter(self, datacenter_path):
         search_index_moref = self.session.vim.service_content.searchIndex
@@ -455,7 +449,7 @@ class Store(glance_store.Store):
     def _build_vim_cookie_header(self, verify_session=False):
         """Build ESX host session cookie header."""
         if verify_session and not self.session.is_current_session_active():
-            self.reset_session(force=True)
+            self.reset_session()
         vim_cookies = self.session.vim.client.options.transport.cookiejar
         if len(list(vim_cookies)) > 0:
             cookie = list(vim_cookies)[0]
@@ -620,7 +614,7 @@ class Store(glance_store.Store):
                                                      location.image_id})
             if resp.status >= 400:
                 if resp.status == httplib.UNAUTHORIZED:
-                    self.reset_session(force=True)
+                    self.reset_session()
                     continue
                 if resp.status == httplib.NOT_FOUND:
                     reason = _('VMware datastore could not find image at URI.')
