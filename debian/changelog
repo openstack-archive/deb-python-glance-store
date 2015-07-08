@@ -2,6 +2,7 @@ python-glance-store (0.6.0-1) experimental; urgency=medium
 
   * New upstream release.
   * Updated (build-)depends for this release.
+  * Dropped requirements.txt patch (which was removing ordereddict).
 
  -- Thomas Goirand <zigo@debian.org>  Wed, 08 Jul 2015 02:19:20 +0200
 
