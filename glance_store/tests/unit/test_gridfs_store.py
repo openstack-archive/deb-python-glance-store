@@ -13,15 +13,14 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import StringIO
-
 import gridfs
 import mock
 import pymongo
+import six
 
 from glance_store._drivers import gridfs as gfs
 from glance_store.tests import base
-from tests.unit import test_store_capabilities
+from glance_store.tests.unit import test_store_capabilities
 
 
 GRIDFS_CONF = {'mongodb_store_uri': 'mongodb://fake_store_uri',
@@ -92,6 +91,6 @@ class TestStore(base.StoreBaseTest,
         self.store.configure()
 
     def test_cleanup_when_add_image_exception(self):
-        self.store.add('fake_image_id', StringIO.StringIO('xx'), 2)
+        self.store.add('fake_image_id', six.StringIO('xx'), 2)
         self.assertEqual(self.store.fs.called_commands,
                          ['exists', 'put', 'get'])

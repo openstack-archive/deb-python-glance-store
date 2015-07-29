@@ -16,7 +16,6 @@
 """Storage backend for VMware Datastore"""
 
 import hashlib
-import httplib
 import logging
 import os
 
@@ -32,11 +31,12 @@ try:
     from oslo_vmware import vim_util
 except ImportError:
     api = None
+from six.moves import http_client
+from six.moves import urllib
 
 import six
 # NOTE(jokke): simplified transition to py3, behaves like py2 xrange
 from six.moves import range
-import six.moves.urllib.parse as urlparse
 
 import glance_store
 from glance_store import capabilities
@@ -121,7 +121,7 @@ def http_response_iterator(conn, response, size):
     """Return an iterator for a file-like object.
 
     :param conn: HTTP(S) Connection
-    :param response: httplib.HTTPResponse object
+    :param response: http_client.HTTPResponse object
     :param size: Chunk size to iterate with
     """
     try:
@@ -155,18 +155,18 @@ class _ChunkReader(_Reader):
 
     def __init__(self, data, blocksize=8192):
         self.blocksize = blocksize
-        self.current_chunk = ""
+        self.current_chunk = b""
         self.closed = False
         super(_ChunkReader, self).__init__(data)
 
     def read(self, size=None):
-        ret = ""
+        ret = b""
         while size is None or size >= len(self.current_chunk):
             ret += self.current_chunk
             if size is not None:
                 size -= len(self.current_chunk)
             if self.closed:
-                self.current_chunk = ""
+                self.current_chunk = b""
                 break
             self._get_chunk()
         else:
@@ -181,9 +181,14 @@ class _ChunkReader(_Reader):
             self._size += chunk_len
             self.checksum.update(chunk)
             if chunk:
-                self.current_chunk = '%x\r\n%s\r\n' % (chunk_len, chunk)
+                if six.PY3:
+                    size_header = ('%x\r\n' % chunk_len).encode('ascii')
+                    self.current_chunk = b''.join((size_header, chunk,
+                                                   b'\r\n'))
+                else:
+                    self.current_chunk = b'%x\r\n%s\r\n' % (chunk_len, chunk)
             else:
-                self.current_chunk = '0\r\n\r\n'
+                self.current_chunk = b'0\r\n\r\n'
                 self.closed = True
 
 
@@ -210,7 +215,7 @@ class StoreLocation(location.StoreLocation):
         param_list = {'dsName': self.datstore_name}
         if self.datacenter_path:
             param_list['dcPath'] = self.datacenter_path
-        self.query = urlparse.urlencode(param_list)
+        self.query = urllib.parse.urlencode(param_list)
 
     def get_uri(self):
         if netutils.is_valid_ipv6(self.server_host):
@@ -236,7 +241,7 @@ class StoreLocation(location.StoreLocation):
             LOG.info(reason)
             raise exceptions.BadStoreUri(message=reason)
         (self.scheme, self.server_host,
-         path, params, query, fragment) = urlparse.urlparse(uri)
+         path, params, query, fragment) = urllib.parse.urlparse(uri)
         if not query:
             path, query = path.split('?')
 
@@ -246,7 +251,7 @@ class StoreLocation(location.StoreLocation):
         # reason = 'Badly formed VMware datastore URI %(uri)s.' % {'uri': uri}
         # LOG.debug(reason)
         # raise exceptions.BadStoreUri(reason)
-        parts = urlparse.parse_qs(self.query)
+        parts = urllib.parse.parse_qs(self.query)
         dc_path = parts.get('dcPath')
         if dc_path:
             self.datacenter_path = dc_path[0]
@@ -356,7 +361,7 @@ class Store(glance_store.Store):
 
     def _parse_datastore_info_and_weight(self, datastore):
         weight = 0
-        parts = map(lambda x: x.strip(), datastore.rsplit(":", 2))
+        parts = [part.strip() for part in datastore.rsplit(":", 2)]
         if len(parts) < 2:
             msg = _('vmware_datastores format must be '
                     'datacenter_path:datastore_name:weight or '
@@ -490,15 +495,16 @@ class Store(glance_store.Store):
                              'image_id': image_id}, self.conf)
         # NOTE(arnaud): use a decorator when the config is not tied to self
         cookie = self._build_vim_cookie_header(True)
-        headers = dict(headers.items() + {'Cookie': cookie}.items())
+        headers = dict(headers)
+        headers['Cookie'] = cookie
         conn_class = self._get_http_conn_class()
         conn = conn_class(loc.server_host)
-        url = urlparse.quote('%s?%s' % (loc.path, loc.query))
+        url = urllib.parse.quote('%s?%s' % (loc.path, loc.query))
         try:
             conn.request('PUT', url, image_file, headers)
         except IOError as e:
             # When a session is not authenticated, the socket is closed by
-            # the server after sending the response. httplib has an open
+            # the server after sending the response. http_client has an open
             # issue with https that raises Broken Pipe
             # error instead of returning the response.
             # See http://bugs.python.org/issue16062. Here, we log the error
@@ -514,12 +520,12 @@ class Store(glance_store.Store):
                 LOG.exception(_LE('Failed to upload content of image '
                                   '%(image)s'), {'image': image_id})
         res = conn.getresponse()
-        if res.status == httplib.CONFLICT:
+        if res.status == http_client.CONFLICT:
             raise exceptions.Duplicate(_("Image file %(image_id)s already "
                                          "exists!") %
                                        {'image_id': image_id})
 
-        if res.status not in (httplib.CREATED, httplib.OK):
+        if res.status not in (http_client.CREATED, http_client.OK):
             msg = (_LE('Failed to upload content of image %(image)s. '
                        'The request returned an unexpected status: %(status)s.'
                        '\nThe response body:\n%(body)s') %
@@ -548,7 +554,7 @@ class Store(glance_store.Store):
 
             def another(self):
                 try:
-                    return self.wrapped.next()
+                    return next(self.wrapped)
                 except StopIteration:
                     return ''
 
@@ -613,10 +619,10 @@ class Store(glance_store.Store):
                                       'content.') % {'image':
                                                      location.image_id})
             if resp.status >= 400:
-                if resp.status == httplib.UNAUTHORIZED:
+                if resp.status == http_client.UNAUTHORIZED:
                     self.reset_session()
                     continue
-                if resp.status == httplib.NOT_FOUND:
+                if resp.status == http_client.NOT_FOUND:
                     reason = _('VMware datastore could not find image at URI.')
                     LOG.info(reason)
                     raise exceptions.NotFound(message=reason)
@@ -647,12 +653,12 @@ class Store(glance_store.Store):
     def _get_http_conn(self, method, loc, headers, content=None):
         conn_class = self._get_http_conn_class()
         conn = conn_class(loc.server_host)
-        url = urlparse.quote('%s?%s' % (loc.path, loc.query))
+        url = urllib.parse.quote('%s?%s' % (loc.path, loc.query))
         conn.request(method, url, content, headers)
 
         return conn
 
     def _get_http_conn_class(self):
         if self.api_insecure:
-            return httplib.HTTPConnection
-        return httplib.HTTPSConnection
+            return http_client.HTTPConnection
+        return http_client.HTTPSConnection

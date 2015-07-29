@@ -13,16 +13,15 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import StringIO
-
 import mock
 from oslo_utils import units
+import six
 
 from glance_store._drivers import rbd as rbd_store
 from glance_store import exceptions
 from glance_store.location import Location
 from glance_store.tests import base
-from tests.unit import test_store_capabilities
+from glance_store.tests.unit import test_store_capabilities
 
 
 class MockRados(object):
@@ -58,6 +57,9 @@ class MockRados(object):
             return MockRados.ioctx()
 
         def shutdown(self, *args, **kwargs):
+            pass
+
+        def conf_get(self, *args, **kwargs):
             pass
 
 
@@ -142,6 +144,8 @@ class MockRBD(object):
         def clone(self, *args, **kwargs):
             raise NotImplementedError()
 
+    RBD_FEATURE_LAYERING = 1
+
 
 class TestStore(base.StoreBaseTest,
                 test_store_capabilities.TestStoreCapabilitiesChecking):
@@ -165,7 +169,7 @@ class TestStore(base.StoreBaseTest,
                                                 self.conf)
         # Provide enough data to get more than one chunk iteration.
         self.data_len = 3 * units.Ki
-        self.data_iter = StringIO.StringIO('*' * self.data_len)
+        self.data_iter = six.BytesIO(b'*' * self.data_len)
 
     def test_add_w_image_size_zero(self):
         """Assert that correct size is returned even though 0 was provided."""

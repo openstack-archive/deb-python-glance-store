@@ -18,7 +18,6 @@
 import copy
 import fixtures
 import hashlib
-import httplib
 import mock
 import tempfile
 import uuid
@@ -28,9 +27,10 @@ from oslo_utils import units
 from oslotest import moxstubout
 import requests_mock
 import six
+from six import moves
+from six.moves import http_client
 # NOTE(jokke): simplified transition to py3, behaves like py2 xrange
 from six.moves import range
-import StringIO
 import swiftclient
 
 from glance_store._drivers.swift import store as swift
@@ -42,7 +42,7 @@ from glance_store.common import utils
 from glance_store import exceptions
 from glance_store import location
 from glance_store.tests import base
-from tests.unit import test_store_capabilities
+from glance_store.tests.unit import test_store_capabilities
 
 
 CONF = cfg.CONF
@@ -79,14 +79,14 @@ def stub_out_swiftclient(stubs, swift_store_auth_version):
         },
         'glance/%s' % FAKE_UUID2: {'x-static-large-object': 'true', },
     }
-    fixture_objects = {'glance/%s' % FAKE_UUID: six.StringIO("*" * FIVE_KB),
-                       'glance/%s' % FAKE_UUID2: six.StringIO("*" * FIVE_KB), }
+    fixture_objects = {'glance/%s' % FAKE_UUID: six.BytesIO(b"*" * FIVE_KB),
+                       'glance/%s' % FAKE_UUID2: six.BytesIO(b"*" * FIVE_KB), }
 
     def fake_head_container(url, token, container, **kwargs):
         if container not in fixture_containers:
             msg = "No container %s found" % container
-            raise swiftclient.ClientException(msg,
-                                              http_status=httplib.NOT_FOUND)
+            status = http_client.NOT_FOUND
+            raise swiftclient.ClientException(msg, http_status=status)
         return fixture_container_headers
 
     def fake_put_container(url, token, container, **kwargs):
@@ -113,23 +113,25 @@ def stub_out_swiftclient(stubs, swift_store_auth_version):
                 fixture_objects[fixture_key] = None
                 return etag
             if hasattr(contents, 'read'):
-                fixture_object = six.StringIO()
+                fixture_object = six.BytesIO()
+                read_len = 0
                 chunk = contents.read(CHUNKSIZE)
                 checksum = hashlib.md5()
                 while chunk:
                     fixture_object.write(chunk)
+                    read_len += len(chunk)
                     checksum.update(chunk)
                     chunk = contents.read(CHUNKSIZE)
                 etag = checksum.hexdigest()
             else:
-                fixture_object = six.StringIO(contents)
+                fixture_object = six.BytesIO(contents)
+                read_len = len(contents)
                 etag = hashlib.md5(fixture_object.getvalue()).hexdigest()
-            read_len = fixture_object.len
             if read_len > MAX_SWIFT_OBJECT_SIZE:
                 msg = ('Image size:%d exceeds Swift max:%d' %
                        (read_len, MAX_SWIFT_OBJECT_SIZE))
                 raise swiftclient.ClientException(
-                    msg, http_status=httplib.REQUEST_ENTITY_TOO_LARGE)
+                    msg, http_status=http_client.REQUEST_ENTITY_TOO_LARGE)
             fixture_objects[fixture_key] = fixture_object
             fixture_headers[fixture_key] = {
                 'content-length': read_len,
@@ -139,15 +141,15 @@ def stub_out_swiftclient(stubs, swift_store_auth_version):
             msg = ("Object PUT failed - Object with key %s already exists"
                    % fixture_key)
             raise swiftclient.ClientException(msg,
-                                              http_status=httplib.CONFLICT)
+                                              http_status=http_client.CONFLICT)
 
     def fake_get_object(url, token, container, name, **kwargs):
         # GET returns the tuple (list of headers, file object)
         fixture_key = "%s/%s" % (container, name)
         if fixture_key not in fixture_headers:
             msg = "Object GET failed"
-            raise swiftclient.ClientException(msg,
-                                              http_status=httplib.NOT_FOUND)
+            status = http_client.NOT_FOUND
+            raise swiftclient.ClientException(msg, http_status=status)
 
         byte_range = None
         headers = kwargs.get('headers', dict())
@@ -163,7 +165,7 @@ def stub_out_swiftclient(stubs, swift_store_auth_version):
             chunk_keys = sorted([k for k in fixture_headers.keys()
                                  if k.startswith(fixture_key) and
                                  k != fixture_key])
-            result = six.StringIO()
+            result = six.BytesIO()
             for key in chunk_keys:
                 result.write(fixture_objects[key].getvalue())
         else:
@@ -171,7 +173,7 @@ def stub_out_swiftclient(stubs, swift_store_auth_version):
 
         if byte_range is not None:
             start = int(byte_range.split('=')[1].strip('-'))
-            result = six.StringIO(result.getvalue()[start:])
+            result = six.BytesIO(result.getvalue()[start:])
             fixture_headers[fixture_key]['content-length'] = len(
                 result.getvalue())
 
@@ -184,16 +186,16 @@ def stub_out_swiftclient(stubs, swift_store_auth_version):
             return fixture_headers[fixture_key]
         except KeyError:
             msg = "Object HEAD failed - Object does not exist"
-            raise swiftclient.ClientException(msg,
-                                              http_status=httplib.NOT_FOUND)
+            status = http_client.NOT_FOUND
+            raise swiftclient.ClientException(msg, http_status=status)
 
     def fake_delete_object(url, token, container, name, **kwargs):
         # DELETE returns nothing
         fixture_key = "%s/%s" % (container, name)
         if fixture_key not in fixture_headers:
             msg = "Object DELETE failed - Object does not exist"
-            raise swiftclient.ClientException(msg,
-                                              http_status=httplib.NOT_FOUND)
+            status = http_client.NOT_FOUND
+            raise swiftclient.ClientException(msg, http_status=status)
         else:
             del fixture_headers[fixture_key]
             del fixture_objects[fixture_key]
@@ -266,8 +268,8 @@ class SwiftTests(object):
         (image_swift, image_size) = self.store.get(loc)
         self.assertEqual(image_size, 5120)
 
-        expected_data = "*" * FIVE_KB
-        data = ""
+        expected_data = b"*" * FIVE_KB
+        data = b""
 
         for chunk in image_swift:
             data += chunk
@@ -283,16 +285,17 @@ class SwiftTests(object):
         loc = location.get_location_from_uri(uri, conf=self.conf)
         ctxt = mock.MagicMock()
         (image_swift, image_size) = self.store.get(loc, context=ctxt)
-        resp_full = ''.join([chunk for chunk in image_swift.wrapped])
-        resp_half = resp_full[:len(resp_full) / 2]
+        resp_full = b''.join([chunk for chunk in image_swift.wrapped])
+        resp_half = resp_full[:len(resp_full) // 2]
+        resp_half = six.BytesIO(resp_half)
         image_swift.wrapped = swift.swift_retry_iter(resp_half, image_size,
                                                      self.store,
                                                      loc.store_location,
                                                      ctxt)
         self.assertEqual(image_size, 5120)
 
-        expected_data = "*" * FIVE_KB
-        data = ""
+        expected_data = b"*" * FIVE_KB
+        data = b""
 
         for chunk in image_swift:
             data += chunk
@@ -312,8 +315,8 @@ class SwiftTests(object):
         (image_swift, image_size) = self.store.get(loc, context=ctxt)
         self.assertEqual(image_size, 5120)
 
-        expected_data = "*" * FIVE_KB
-        data = ""
+        expected_data = b"*" * FIVE_KB
+        data = b""
 
         for chunk in image_swift:
             data += chunk
@@ -336,16 +339,16 @@ class SwiftTests(object):
                 mock.Mock(return_value=False))
     def test_add(self):
         """Test that we can add an image via the swift backend."""
-        reload(swift)
+        moves.reload_module(swift)
         self.store = Store(self.conf)
         self.store.configure()
         expected_swift_size = FIVE_KB
-        expected_swift_contents = "*" * expected_swift_size
+        expected_swift_contents = b"*" * expected_swift_size
         expected_checksum = hashlib.md5(expected_swift_contents).hexdigest()
         expected_image_id = str(uuid.uuid4())
         loc = "swift+https://tenant%%3Auser1:key@localhost:8080/glance/%s"
         expected_location = loc % (expected_image_id)
-        image_swift = six.StringIO(expected_swift_contents)
+        image_swift = six.BytesIO(expected_swift_contents)
 
         global SWIFT_PUT_OBJECT_CALLS
         SWIFT_PUT_OBJECT_CALLS = 0
@@ -362,7 +365,7 @@ class SwiftTests(object):
 
         loc = location.get_location_from_uri(expected_location, conf=self.conf)
         (new_image_swift, new_image_size) = self.store.get(loc)
-        new_image_contents = ''.join([chunk for chunk in new_image_swift])
+        new_image_contents = b''.join([chunk for chunk in new_image_swift])
         new_image_swift_size = len(new_image_swift)
 
         self.assertEqual(expected_swift_contents, new_image_contents)
@@ -373,14 +376,14 @@ class SwiftTests(object):
         conf = copy.deepcopy(SWIFT_CONF)
         conf['default_swift_reference'] = 'store_2'
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
         self.store = Store(self.conf)
         self.store.configure()
 
         expected_swift_size = FIVE_KB
-        expected_swift_contents = "*" * expected_swift_size
+        expected_swift_contents = b"*" * expected_swift_size
         expected_image_id = str(uuid.uuid4())
-        image_swift = six.StringIO(expected_swift_contents)
+        image_swift = six.BytesIO(expected_swift_contents)
         global SWIFT_PUT_OBJECT_CALLS
         SWIFT_PUT_OBJECT_CALLS = 0
         loc = 'swift+config://store_2/glance/%s'
@@ -413,17 +416,17 @@ class SwiftTests(object):
             image_id = str(uuid.uuid4())
             expected_location = expected_location % image_id
             expected_swift_size = FIVE_KB
-            expected_swift_contents = "*" * expected_swift_size
+            expected_swift_contents = b"*" * expected_swift_size
             expected_checksum = \
                 hashlib.md5(expected_swift_contents).hexdigest()
 
-            image_swift = six.StringIO(expected_swift_contents)
+            image_swift = six.BytesIO(expected_swift_contents)
 
             global SWIFT_PUT_OBJECT_CALLS
             SWIFT_PUT_OBJECT_CALLS = 0
             conf['default_swift_reference'] = variation
             self.config(**conf)
-            reload(swift)
+            moves.reload_module(swift)
             self.store = Store(self.conf)
             self.store.configure()
             loc, size, checksum, _ = self.store.add(image_id, image_swift,
@@ -437,7 +440,7 @@ class SwiftTests(object):
             loc = location.get_location_from_uri(expected_location,
                                                  conf=self.conf)
             (new_image_swift, new_image_size) = self.store.get(loc)
-            new_image_contents = ''.join([chunk for chunk in new_image_swift])
+            new_image_contents = b''.join([chunk for chunk in new_image_swift])
             new_image_swift_size = len(new_image_swift)
 
             self.assertEqual(expected_swift_contents, new_image_contents)
@@ -453,12 +456,12 @@ class SwiftTests(object):
         conf['swift_store_create_container_on_put'] = False
         conf['swift_store_container'] = 'noexist'
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
 
         self.store = Store(self.conf)
         self.store.configure()
 
-        image_swift = six.StringIO("nevergonnamakeit")
+        image_swift = six.BytesIO(b"nevergonnamakeit")
 
         global SWIFT_PUT_OBJECT_CALLS
         SWIFT_PUT_OBJECT_CALLS = 0
@@ -485,12 +488,12 @@ class SwiftTests(object):
         creates the container automatically if flag is set
         """
         expected_swift_size = FIVE_KB
-        expected_swift_contents = "*" * expected_swift_size
+        expected_swift_contents = b"*" * expected_swift_size
         expected_checksum = hashlib.md5(expected_swift_contents).hexdigest()
         expected_image_id = str(uuid.uuid4())
         loc = 'swift+config://ref1/noexist/%s'
         expected_location = loc % (expected_image_id)
-        image_swift = six.StringIO(expected_swift_contents)
+        image_swift = six.BytesIO(expected_swift_contents)
 
         global SWIFT_PUT_OBJECT_CALLS
         SWIFT_PUT_OBJECT_CALLS = 0
@@ -499,7 +502,7 @@ class SwiftTests(object):
         conf['swift_store_create_container_on_put'] = True
         conf['swift_store_container'] = 'noexist'
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
         self.store = Store(self.conf)
         self.store.configure()
         loc, size, checksum, _ = self.store.add(expected_image_id,
@@ -513,7 +516,7 @@ class SwiftTests(object):
 
         loc = location.get_location_from_uri(expected_location, conf=self.conf)
         (new_image_swift, new_image_size) = self.store.get(loc)
-        new_image_contents = ''.join([chunk for chunk in new_image_swift])
+        new_image_contents = b''.join([chunk for chunk in new_image_swift])
         new_image_swift_size = len(new_image_swift)
 
         self.assertEqual(expected_swift_contents, new_image_contents)
@@ -528,13 +531,13 @@ class SwiftTests(object):
         multi containers will create the container automatically if flag is set
         """
         expected_swift_size = FIVE_KB
-        expected_swift_contents = "*" * expected_swift_size
+        expected_swift_contents = b"*" * expected_swift_size
         expected_checksum = hashlib.md5(expected_swift_contents).hexdigest()
         expected_image_id = str(uuid.uuid4())
         container = 'randomname_' + expected_image_id[:2]
         loc = 'swift+config://ref1/%s/%s'
         expected_location = loc % (container, expected_image_id)
-        image_swift = six.StringIO(expected_swift_contents)
+        image_swift = six.BytesIO(expected_swift_contents)
 
         global SWIFT_PUT_OBJECT_CALLS
         SWIFT_PUT_OBJECT_CALLS = 0
@@ -544,7 +547,7 @@ class SwiftTests(object):
         conf['swift_store_container'] = 'randomname'
         conf['swift_store_multiple_containers_seed'] = 2
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
         self.store = Store(self.conf)
         self.store.configure()
         loc, size, checksum, _ = self.store.add(expected_image_id,
@@ -558,7 +561,7 @@ class SwiftTests(object):
 
         loc = location.get_location_from_uri(expected_location, conf=self.conf)
         (new_image_swift, new_image_size) = self.store.get(loc)
-        new_image_contents = ''.join([chunk for chunk in new_image_swift])
+        new_image_contents = b''.join([chunk for chunk in new_image_swift])
         new_image_swift_size = len(new_image_swift)
 
         self.assertEqual(expected_swift_contents, new_image_contents)
@@ -578,7 +581,7 @@ class SwiftTests(object):
         conf['swift_store_container'] = 'randomname'
         conf['swift_store_multiple_containers_seed'] = 2
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
 
         expected_image_id = str(uuid.uuid4())
         expected_container = 'randomname_' + expected_image_id[:2]
@@ -586,7 +589,7 @@ class SwiftTests(object):
         self.store = Store(self.conf)
         self.store.configure()
 
-        image_swift = six.StringIO("nevergonnamakeit")
+        image_swift = six.BytesIO(b"nevergonnamakeit")
 
         global SWIFT_PUT_OBJECT_CALLS
         SWIFT_PUT_OBJECT_CALLS = 0
@@ -610,12 +613,12 @@ class SwiftTests(object):
                 mock.Mock(return_value=False))
     def test_multi_container_doesnt_impact_multi_tenant_add(self):
         expected_swift_size = FIVE_KB
-        expected_swift_contents = "*" * expected_swift_size
+        expected_swift_contents = b"*" * expected_swift_size
         expected_image_id = str(uuid.uuid4())
         expected_container = 'container_' + expected_image_id
         loc = 'swift+https://some_endpoint/%s/%s'
         expected_location = loc % (expected_container, expected_image_id)
-        image_swift = six.StringIO(expected_swift_contents)
+        image_swift = six.BytesIO(expected_swift_contents)
 
         global SWIFT_PUT_OBJECT_CALLS
         SWIFT_PUT_OBJECT_CALLS = 0
@@ -646,12 +649,12 @@ class SwiftTests(object):
         put_object()...
         """
         expected_swift_size = FIVE_KB
-        expected_swift_contents = "*" * expected_swift_size
+        expected_swift_contents = b"*" * expected_swift_size
         expected_checksum = hashlib.md5(expected_swift_contents).hexdigest()
         expected_image_id = str(uuid.uuid4())
         loc = 'swift+config://ref1/glance/%s'
         expected_location = loc % (expected_image_id)
-        image_swift = six.StringIO(expected_swift_contents)
+        image_swift = six.BytesIO(expected_swift_contents)
 
         global SWIFT_PUT_OBJECT_CALLS
         SWIFT_PUT_OBJECT_CALLS = 0
@@ -679,7 +682,7 @@ class SwiftTests(object):
 
         loc = location.get_location_from_uri(expected_location, conf=self.conf)
         (new_image_swift, new_image_size) = self.store.get(loc)
-        new_image_contents = ''.join([chunk for chunk in new_image_swift])
+        new_image_contents = b''.join([chunk for chunk in new_image_swift])
         new_image_swift_size = len(new_image_contents)
 
         self.assertEqual(expected_swift_contents, new_image_contents)
@@ -698,12 +701,12 @@ class SwiftTests(object):
         """
         # Set up a 'large' image of 5KB
         expected_swift_size = FIVE_KB
-        expected_swift_contents = "*" * expected_swift_size
+        expected_swift_contents = b"*" * expected_swift_size
         expected_checksum = hashlib.md5(expected_swift_contents).hexdigest()
         expected_image_id = str(uuid.uuid4())
         loc = 'swift+config://ref1/glance/%s'
         expected_location = loc % (expected_image_id)
-        image_swift = six.StringIO(expected_swift_contents)
+        image_swift = six.BytesIO(expected_swift_contents)
 
         global SWIFT_PUT_OBJECT_CALLS
         SWIFT_PUT_OBJECT_CALLS = 0
@@ -739,7 +742,7 @@ class SwiftTests(object):
 
         loc = location.get_location_from_uri(expected_location, conf=self.conf)
         (new_image_swift, new_image_size) = self.store.get(loc)
-        new_image_contents = ''.join([chunk for chunk in new_image_swift])
+        new_image_contents = b''.join([chunk for chunk in new_image_swift])
         new_image_swift_size = len(new_image_contents)
 
         self.assertEqual(expected_swift_contents, new_image_contents)
@@ -752,7 +755,7 @@ class SwiftTests(object):
         """
         self.store = Store(self.conf)
         self.store.configure()
-        image_swift = six.StringIO("nevergonnamakeit")
+        image_swift = six.BytesIO(b"nevergonnamakeit")
         self.assertRaises(exceptions.Duplicate,
                           self.store.add,
                           FAKE_UUID, image_swift, 0)
@@ -800,7 +803,7 @@ class SwiftTests(object):
         """
         conf = copy.deepcopy(SWIFT_CONF)
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
         self.store = Store(self.conf)
         self.store.configure()
 
@@ -818,7 +821,7 @@ class SwiftTests(object):
         """
         conf = copy.deepcopy(SWIFT_CONF)
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
         self.store = Store(self.conf)
         self.store.configure()
 
@@ -827,7 +830,7 @@ class SwiftTests(object):
         loc = location.get_location_from_uri(uri, conf=self.conf)
         self.store.delete(loc)
 
-        mock_del_obj.assert_called_once()
+        self.assertEqual(1, mock_del_obj.call_count)
         _, kwargs = mock_del_obj.call_args
         self.assertEqual('multipart-manifest=delete',
                          kwargs.get('query_string'))
@@ -839,7 +842,7 @@ class SwiftTests(object):
         """
         conf = copy.deepcopy(SWIFT_CONF)
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
         self.store = Store(self.conf)
         self.store.configure()
 
@@ -848,7 +851,7 @@ class SwiftTests(object):
         loc = location.get_location_from_uri(uri, conf=self.conf)
         self.store.delete(loc)
 
-        mock_del_obj.assert_called_once()
+        self.assertEqual(1, mock_del_obj.call_count)
         _, kwargs = mock_del_obj.call_args
         self.assertEqual(None, kwargs.get('query_string'))
 
@@ -858,7 +861,7 @@ class SwiftTests(object):
         """
         conf = copy.deepcopy(SWIFT_CONF)
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
         self.store = Store(self.conf)
         self.store.configure()
 
@@ -875,7 +878,7 @@ class SwiftTests(object):
         """
         conf = copy.deepcopy(SWIFT_CONF)
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
         self.store = Store(self.conf)
         self.store.configure()
 
@@ -900,21 +903,21 @@ class SwiftTests(object):
 
         def fake_get_container(container, **kwargs):
             # Returning 5 fake segments
-            return None, [{'name': '%s-%05d' % (test_image_id, x)}
+            return None, [{'name': '%s-%03d' % (test_image_id, x)}
                           for x in range(1, 6)]
 
         def fake_delete_object(container, object_name):
             # Simulate error on 1st and 3rd segments
             global SWIFT_DELETE_OBJECT_CALLS
             SWIFT_DELETE_OBJECT_CALLS += 1
-            if object_name.endswith('001') or object_name.endswith('003'):
+            if object_name.endswith('-001') or object_name.endswith('-003'):
                 raise swiftclient.ClientException('Object DELETE failed')
             else:
                 pass
 
         conf = copy.deepcopy(SWIFT_CONF)
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
         self.store = Store(self.conf)
         self.store.configure()
 
@@ -1268,7 +1271,7 @@ class TestMultiTenantStoreContext(base.StoreBaseTest):
 
         m.get("http://127.0.0.1/glance_123/123")
         store.get(loc, context=ctx)
-        self.assertEqual('0123', m.last_request.headers['X-Auth-Token'])
+        self.assertEqual(b'0123', m.last_request.headers['X-Auth-Token'])
 
     @requests_mock.mock()
     def test_upload_context(self, m):
@@ -1281,15 +1284,18 @@ class TestMultiTenantStoreContext(base.StoreBaseTest):
         self.config(swift_store_multi_tenant=True)
         store = Store(self.conf)
         store.configure()
-        pseudo_file = StringIO.StringIO('Some data')
+        content = b'Some data'
+        pseudo_file = six.BytesIO(content)
         ctx = mock.MagicMock(
             service_catalog=self.service_catalog, user='tenant:user1',
             tenant='tenant', auth_token='0123')
-        store.add('123', pseudo_file, pseudo_file.len,
+        store.add('123', pseudo_file, len(content),
                   context=ctx)
 
-        self.assertEqual('0123', head_req.last_request.headers['X-Auth-Token'])
-        self.assertEqual('0123', put_req.last_request.headers['X-Auth-Token'])
+        self.assertEqual(b'0123',
+                         head_req.last_request.headers['X-Auth-Token'])
+        self.assertEqual(b'0123',
+                         put_req.last_request.headers['X-Auth-Token'])
 
 
 class FakeGetEndpoint(object):
@@ -1314,7 +1320,7 @@ class TestCreatingLocations(base.StoreBaseTest):
         conf = copy.deepcopy(SWIFT_CONF)
         self.store = Store(self.conf)
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
         self.addCleanup(self.conf.reset)
 
     def test_single_tenant_location(self):
@@ -1325,7 +1331,7 @@ class TestCreatingLocations(base.StoreBaseTest):
         conf.update({'swift_store_config_file': self.swift_config_file})
         conf['default_swift_reference'] = 'ref1'
         self.config(**conf)
-        reload(swift)
+        moves.reload_module(swift)
 
         store = swift.SingleTenantStore(self.conf)
         store.configure()
@@ -1435,7 +1441,7 @@ class TestChunkReader(base.StoreBaseTest):
         CHUNKSIZE = 100
         checksum = hashlib.md5()
         data_file = tempfile.NamedTemporaryFile()
-        data_file.write('*' * units.Ki)
+        data_file.write(b'*' * units.Ki)
         data_file.flush()
         infile = open(data_file.name, 'rb')
         bytes_read = 0
@@ -1447,6 +1453,7 @@ class TestChunkReader(base.StoreBaseTest):
                 break
         self.assertEqual(units.Ki, bytes_read)
         data_file.close()
+        infile.close()
 
 
 class TestMultipleContainers(base.StoreBaseTest):

@@ -23,13 +23,13 @@ import hashlib
 import logging
 import os
 import stat
-import urlparse
 
 import jsonschema
 from oslo_config import cfg
 from oslo_serialization import jsonutils
 from oslo_utils import excutils
 from oslo_utils import units
+from six.moves import urllib
 
 import glance_store
 from glance_store import capabilities
@@ -98,7 +98,7 @@ class StoreLocation(glance_store.location.StoreLocation):
         in the URL are interpreted differently in Python 2.6.1+ than prior
         versions of Python.
         """
-        pieces = urlparse.urlparse(uri)
+        pieces = urllib.parse.urlparse(uri)
         assert pieces.scheme in ('file', 'filesystem')
         self.scheme = pieces.scheme
         path = (pieces.netloc + pieces.path).strip()
@@ -256,7 +256,7 @@ class Store(glance_store.driver.Store):
         :raises: BadStoreConfiguration exception if metadata is not valid.
         """
         try:
-            with open(metadata_file, 'r') as fptr:
+            with open(metadata_file, 'rb') as fptr:
                 metadata = jsonutils.load(fptr)
 
             if isinstance(metadata, dict):
@@ -388,7 +388,7 @@ class Store(glance_store.driver.Store):
                empty directory path is specified.
         """
         priority = 0
-        parts = map(lambda x: x.strip(), datadir.rsplit(":", 1))
+        parts = [part.strip() for part in datadir.rsplit(":", 1)]
         datadir_path = parts[0]
         if len(parts) == 2 and parts[1]:
             priority = parts[1]

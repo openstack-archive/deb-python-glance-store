@@ -21,10 +21,11 @@ from __future__ import with_statement
 import hashlib
 import logging
 import math
-import urllib
 
 from oslo_config import cfg
 from oslo_utils import units
+import six
+from six.moves import urllib
 
 from glance_store import capabilities
 from glance_store.common import utils
@@ -49,6 +50,7 @@ DEFAULT_SNAPNAME = 'snap'
 
 LOG = logging.getLogger(__name__)
 _LI = i18n._LI
+_LE = i18n._LE
 
 _RBD_OPTS = [
     cfg.IntOpt('rbd_store_chunk_size', default=DEFAULT_CHUNKSIZE,
@@ -83,7 +85,7 @@ class StoreLocation(location.StoreLocation):
 
     def process_specs(self):
         # convert to ascii since librbd doesn't handle unicode
-        for key, value in self.specs.iteritems():
+        for key, value in six.iteritems(self.specs):
             self.specs[key] = str(value)
         self.fsid = self.specs.get('fsid')
         self.pool = self.specs.get('pool')
@@ -93,10 +95,10 @@ class StoreLocation(location.StoreLocation):
     def get_uri(self):
         if self.fsid and self.pool and self.snapshot:
             # ensure nothing contains / or any other url-unsafe character
-            safe_fsid = urllib.quote(self.fsid, '')
-            safe_pool = urllib.quote(self.pool, '')
-            safe_image = urllib.quote(self.image, '')
-            safe_snapshot = urllib.quote(self.snapshot, '')
+            safe_fsid = urllib.parse.quote(self.fsid, '')
+            safe_pool = urllib.parse.quote(self.pool, '')
+            safe_image = urllib.parse.quote(self.image, '')
+            safe_snapshot = urllib.parse.quote(self.snapshot, '')
             return "rbd://%s/%s/%s/%s" % (safe_fsid, safe_pool,
                                           safe_image, safe_snapshot)
         else:
@@ -125,7 +127,7 @@ class StoreLocation(location.StoreLocation):
                 (None, None, pieces[0], None)
         elif len(pieces) == 4:
             self.fsid, self.pool, self.image, self.snapshot = \
-                map(urllib.unquote, pieces)
+                map(urllib.parse.unquote, pieces)
         else:
             reason = _('URI must have exactly 1 or 4 components')
             msg = _LI("Invalid URI: %s") % reason
@@ -250,7 +252,7 @@ class Store(driver.Store):
                     LOG.debug(msg)
                     raise exceptions.NotFound(msg)
 
-    def _create_image(self, fsid, ioctx, image_name,
+    def _create_image(self, fsid, conn, ioctx, image_name,
                       size, order, context=None):
         """
         Create an rbd image. If librbd supports it,
@@ -262,18 +264,17 @@ class Store(driver.Store):
         :retval `glance_store.rbd.StoreLocation` object
         """
         librbd = rbd.RBD()
-        if hasattr(rbd, 'RBD_FEATURE_LAYERING'):
-            librbd.create(ioctx, image_name, size, order, old_format=False,
-                          features=rbd.RBD_FEATURE_LAYERING)
-            return StoreLocation({
-                'fsid': fsid,
-                'pool': self.pool,
-                'image': image_name,
-                'snapshot': DEFAULT_SNAPNAME,
-            }, self.conf)
-        else:
-            librbd.create(ioctx, image_name, size, order, old_format=True)
-            return StoreLocation({'image': image_name}, self.conf)
+        features = conn.conf_get('rbd_default_features')
+        if ((features is None) or (int(features) == 0)):
+            features = rbd.RBD_FEATURE_LAYERING
+        librbd.create(ioctx, image_name, size, order, old_format=False,
+                      features=features)
+        return StoreLocation({
+            'fsid': fsid,
+            'pool': self.pool,
+            'image': image_name,
+            'snapshot': DEFAULT_SNAPNAME,
+        }, self.conf)
 
     def _delete_image(self, target_pool, image_name,
                       snapshot_name=None, context=None):
@@ -347,7 +348,7 @@ class Store(driver.Store):
                                   "will be considerably slower than normal"))
 
                 try:
-                    loc = self._create_image(fsid, ioctx, image_name,
+                    loc = self._create_image(fsid, conn, ioctx, image_name,
                                              image_size, order)
                 except rbd.ImageExists:
                     msg = _('RBD image %s already exists') % image_id
@@ -379,6 +380,12 @@ class Store(driver.Store):
                             image.create_snap(loc.snapshot)
                             image.protect_snap(loc.snapshot)
                 except Exception as exc:
+                    log_msg = (_LE("Failed to store image %(img_name)s "
+                                   "Store Exception %(store_exc)s") %
+                               {'img_name': image_name,
+                                'store_exc': exc})
+                    LOG.error(log_msg)
+
                     # Delete image if one was created
                     try:
                         target_pool = loc.pool or self.pool

@@ -31,8 +31,8 @@ from glance_store import backend
 from glance_store import exceptions
 from glance_store import location
 from glance_store.tests import base
+from glance_store.tests.unit import test_store_capabilities
 from glance_store.tests import utils
-from tests.unit import test_store_capabilities
 
 
 FAKE_UUID = str(uuid.uuid4())
@@ -119,6 +119,9 @@ class TestStore(base.StoreBaseTest,
         self.store.store_image_dir = (
             VMWARE_DS['vmware_store_image_dir'])
 
+    def _mock_http_connection(self):
+        return mock.patch('six.moves.http_client.HTTPConnection')
+
     @mock.patch('oslo_vmware.api.VMwareAPISession')
     def test_get(self, mock_api_session):
         """Test a "normal" retrieval of an image in chunks."""
@@ -127,7 +130,7 @@ class TestStore(base.StoreBaseTest,
         loc = location.get_location_from_uri(
             "vsphere://127.0.0.1/folder/openstack_glance/%s"
             "?dsName=ds1&dcPath=dc1" % FAKE_UUID, conf=self.conf)
-        with mock.patch('httplib.HTTPConnection') as HttpConn:
+        with self._mock_http_connection() as HttpConn:
             HttpConn.return_value = FakeHTTPConnection()
             (image_file, image_size) = self.store.get(loc)
         self.assertEqual(image_size, expected_image_size)
@@ -143,7 +146,7 @@ class TestStore(base.StoreBaseTest,
         loc = location.get_location_from_uri(
             "vsphere://127.0.0.1/folder/openstack_glan"
             "ce/%s?dsName=ds1&dcPath=dc1" % FAKE_UUID, conf=self.conf)
-        with mock.patch('httplib.HTTPConnection') as HttpConn:
+        with self._mock_http_connection() as HttpConn:
             HttpConn.return_value = FakeHTTPConnection(status=404)
             self.assertRaises(exceptions.NotFound, self.store.get, loc)
 
@@ -155,7 +158,7 @@ class TestStore(base.StoreBaseTest,
         fake_select_datastore.return_value = self.store.datastores[0][0]
         expected_image_id = str(uuid.uuid4())
         expected_size = FIVE_KB
-        expected_contents = "*" * expected_size
+        expected_contents = b"*" * expected_size
         hash_code = hashlib.md5(expected_contents)
         expected_checksum = hash_code.hexdigest()
         fake_size.__get__ = mock.Mock(return_value=expected_size)
@@ -167,8 +170,8 @@ class TestStore(base.StoreBaseTest,
                 expected_image_id,
                 VMWARE_DS['vmware_datacenter_path'],
                 VMWARE_DS['vmware_datastore_name'])
-            image = six.StringIO(expected_contents)
-            with mock.patch('httplib.HTTPConnection') as HttpConn:
+            image = six.BytesIO(expected_contents)
+            with self._mock_http_connection() as HttpConn:
                 HttpConn.return_value = FakeHTTPConnection()
                 location, size, checksum, _ = self.store.add(expected_image_id,
                                                              image,
@@ -190,7 +193,7 @@ class TestStore(base.StoreBaseTest,
         fake_select_datastore.return_value = self.store.datastores[0][0]
         expected_image_id = str(uuid.uuid4())
         expected_size = FIVE_KB
-        expected_contents = "*" * expected_size
+        expected_contents = b"*" * expected_size
         hash_code = hashlib.md5(expected_contents)
         expected_checksum = hash_code.hexdigest()
         fake_size.__get__ = mock.Mock(return_value=expected_size)
@@ -202,8 +205,8 @@ class TestStore(base.StoreBaseTest,
                 expected_image_id,
                 VMWARE_DS['vmware_datacenter_path'],
                 VMWARE_DS['vmware_datastore_name'])
-            image = six.StringIO(expected_contents)
-            with mock.patch('httplib.HTTPConnection') as HttpConn:
+            image = six.BytesIO(expected_contents)
+            with self._mock_http_connection() as HttpConn:
                 HttpConn.return_value = FakeHTTPConnection()
                 location, size, checksum, _ = self.store.add(expected_image_id,
                                                              image, 0)
@@ -218,11 +221,11 @@ class TestStore(base.StoreBaseTest,
         loc = location.get_location_from_uri(
             "vsphere://127.0.0.1/folder/openstack_glance/%s?"
             "dsName=ds1&dcPath=dc1" % FAKE_UUID, conf=self.conf)
-        with mock.patch('httplib.HTTPConnection') as HttpConn:
+        with self._mock_http_connection() as HttpConn:
             HttpConn.return_value = FakeHTTPConnection()
             vm_store.Store._service_content = mock.Mock()
             self.store.delete(loc)
-        with mock.patch('httplib.HTTPConnection') as HttpConn:
+        with self._mock_http_connection() as HttpConn:
             HttpConn.return_value = FakeHTTPConnection(status=404)
             self.assertRaises(exceptions.NotFound, self.store.get, loc)
 
@@ -247,7 +250,7 @@ class TestStore(base.StoreBaseTest,
         loc = location.get_location_from_uri(
             "vsphere://127.0.0.1/folder/openstack_glance/%s"
             "?dsName=ds1&dcPath=dc1" % FAKE_UUID, conf=self.conf)
-        with mock.patch('httplib.HTTPConnection') as HttpConn:
+        with self._mock_http_connection() as HttpConn:
             HttpConn.return_value = FakeHTTPConnection()
             image_size = self.store.get_size(loc)
         self.assertEqual(image_size, 31)
@@ -261,13 +264,13 @@ class TestStore(base.StoreBaseTest,
         loc = location.get_location_from_uri(
             "vsphere://127.0.0.1/folder/openstack_glan"
             "ce/%s?dsName=ds1&dcPath=dc1" % FAKE_UUID, conf=self.conf)
-        with mock.patch('httplib.HTTPConnection') as HttpConn:
+        with self._mock_http_connection() as HttpConn:
             HttpConn.return_value = FakeHTTPConnection(status=404)
             self.assertRaises(exceptions.NotFound, self.store.get_size, loc)
 
     def test_reader_full(self):
-        content = 'XXX'
-        image = six.StringIO(content)
+        content = b'XXX'
+        image = six.BytesIO(content)
         expected_checksum = hashlib.md5(content).hexdigest()
         reader = vm_store._Reader(image)
         ret = reader.read()
@@ -276,12 +279,12 @@ class TestStore(base.StoreBaseTest,
         self.assertEqual(len(content), reader.size)
 
     def test_reader_partial(self):
-        content = 'XXX'
-        image = six.StringIO(content)
-        expected_checksum = hashlib.md5('X').hexdigest()
+        content = b'XXX'
+        image = six.BytesIO(content)
+        expected_checksum = hashlib.md5(b'X').hexdigest()
         reader = vm_store._Reader(image)
         ret = reader.read(1)
-        self.assertEqual('X', ret)
+        self.assertEqual(b'X', ret)
         self.assertEqual(expected_checksum, reader.checksum.hexdigest())
         self.assertEqual(1, reader.size)
 
@@ -290,54 +293,61 @@ class TestStore(base.StoreBaseTest,
         Test that the image file reader returns the expected chunk of data
         when the block size is larger than the image.
         """
-        content = 'XXX'
-        image = six.StringIO(content)
+        content = b'XXX'
+        image = six.BytesIO(content)
         expected_checksum = hashlib.md5(content).hexdigest()
         reader = vm_store._ChunkReader(image)
         ret = reader.read()
-        expected_chunk = '%x\r\n%s\r\n' % (len(content), content)
-        last_chunk = '0\r\n\r\n'
-        self.assertEqual('%s%s' % (expected_chunk, last_chunk), ret)
-        self.assertEqual(image.len, reader.size)
+        if six.PY3:
+            expected_chunk = ('%x\r\n%s\r\n'
+                              % (len(content), content.decode('ascii')))
+            expected_chunk = expected_chunk.encode('ascii')
+        else:
+            expected_chunk = b'%x\r\n%s\r\n' % (len(content), content)
+        last_chunk = b'0\r\n\r\n'
+        self.assertEqual(expected_chunk + last_chunk, ret)
+        self.assertEqual(len(content), reader.size)
         self.assertEqual(expected_checksum, reader.checksum.hexdigest())
         self.assertTrue(reader.closed)
         ret = reader.read()
-        self.assertEqual(image.len, reader.size)
+        self.assertEqual(len(content), reader.size)
         self.assertEqual(expected_checksum, reader.checksum.hexdigest())
         self.assertTrue(reader.closed)
-        self.assertEqual('', ret)
+        self.assertEqual(b'', ret)
 
     def test_chunkreader_image_larger_blocksize(self):
         """
         Test that the image file reader returns the expected chunks when
         the block size specified is smaller than the image.
         """
-        content = 'XXX'
-        image = six.StringIO(content)
+        content = b'XXX'
+        image = six.BytesIO(content)
         expected_checksum = hashlib.md5(content).hexdigest()
-        last_chunk = '0\r\n\r\n'
+        last_chunk = b'0\r\n\r\n'
         reader = vm_store._ChunkReader(image, blocksize=1)
         ret = reader.read()
-        expected_chunk = '1\r\nX\r\n'
-        self.assertEqual('%s%s%s%s' % (expected_chunk, expected_chunk,
-                                       expected_chunk, last_chunk), ret)
+        expected_chunk = b'1\r\nX\r\n'
+        expected = (expected_chunk + expected_chunk + expected_chunk
+                    + last_chunk)
+        self.assertEqual(expected,
+                         ret)
         self.assertEqual(expected_checksum, reader.checksum.hexdigest())
-        self.assertEqual(image.len, reader.size)
+        self.assertEqual(len(content), reader.size)
         self.assertTrue(reader.closed)
 
     def test_chunkreader_size(self):
         """Test that the image reader takes into account the specified size."""
-        content = 'XXX'
-        image = six.StringIO(content)
+        content = b'XXX'
+        image = six.BytesIO(content)
         expected_checksum = hashlib.md5(content).hexdigest()
         reader = vm_store._ChunkReader(image, blocksize=1)
         ret = reader.read(size=3)
-        self.assertEqual('1\r\n', ret)
+        self.assertEqual(b'1\r\n', ret)
         ret = reader.read(size=1)
-        self.assertEqual('X', ret)
+        self.assertEqual(b'X', ret)
         ret = reader.read()
         self.assertEqual(expected_checksum, reader.checksum.hexdigest())
-        self.assertEqual(image.len, reader.size)
+        self.assertEqual(len(content), reader.size)
         self.assertTrue(reader.closed)
 
     def test_sanity_check_api_retry_count(self):
@@ -428,10 +438,10 @@ class TestStore(base.StoreBaseTest,
     def test_unexpected_status(self, mock_api_session, mock_select_datastore):
         expected_image_id = str(uuid.uuid4())
         expected_size = FIVE_KB
-        expected_contents = "*" * expected_size
-        image = six.StringIO(expected_contents)
+        expected_contents = b"*" * expected_size
+        image = six.BytesIO(expected_contents)
         self.session = mock.Mock()
-        with mock.patch('httplib.HTTPConnection') as HttpConn:
+        with self._mock_http_connection() as HttpConn:
             HttpConn.return_value = FakeHTTPConnection(status=401)
             self.assertRaises(exceptions.BackendException,
                               self.store.add,
@@ -469,10 +479,10 @@ class TestStore(base.StoreBaseTest,
         mock_select_datastore.return_value = self.store.datastores[0][0]
         expected_image_id = str(uuid.uuid4())
         expected_size = FIVE_KB
-        expected_contents = "*" * expected_size
-        image = six.StringIO(expected_contents)
+        expected_contents = b"*" * expected_size
+        image = six.BytesIO(expected_contents)
         self.session = mock.Mock()
-        with mock.patch('httplib.HTTPConnection') as HttpConn:
+        with self._mock_http_connection() as HttpConn:
             HttpConn.request.side_effect = IOError
             self.assertRaises(exceptions.BackendException,
                               self.store.add,

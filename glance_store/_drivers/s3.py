@@ -16,18 +16,18 @@
 """Storage backend for S3 or Storage Servers that follow the S3 Protocol"""
 
 import hashlib
-import httplib
 import logging
 import math
 import re
 import tempfile
-import urlparse
 
 import eventlet
 from oslo_config import cfg
 from oslo_utils import netutils
 from oslo_utils import units
 import six
+from six.moves import http_client
+from six.moves import urllib
 
 import glance_store
 from glance_store import capabilities
@@ -207,7 +207,7 @@ class StoreLocation(glance_store.location.StoreLocation):
             LOG.info(_LI("Invalid store uri: %s") % reason)
             raise exceptions.BadStoreUri(message=reason)
 
-        pieces = urlparse.urlparse(uri)
+        pieces = urllib.parse.urlparse(uri)
         assert pieces.scheme in ('s3', 's3+http', 's3+https')
         self.scheme = pieces.scheme
         path = pieces.path.strip('/')
@@ -221,12 +221,13 @@ class StoreLocation(glance_store.location.StoreLocation):
             try:
                 access_key = cred_parts[0]
                 secret_key = cred_parts[1]
-                # NOTE(jaypipes): Need to encode to UTF-8 here because of a
-                # bug in the HMAC library that boto uses.
-                # See: http://bugs.python.org/issue5285
-                # See: http://trac.edgewall.org/ticket/8083
-                access_key = access_key.encode('utf-8')
-                secret_key = secret_key.encode('utf-8')
+                if six.PY2:
+                    # NOTE(jaypipes): Need to encode to UTF-8 here because of a
+                    # bug in the HMAC library that boto uses.
+                    # See: http://bugs.python.org/issue5285
+                    # See: http://trac.edgewall.org/ticket/8083
+                    access_key = access_key.encode('utf-8')
+                    secret_key = secret_key.encode('utf-8')
                 self.accesskey = access_key
                 self.secretkey = secret_key
             except IndexError:
@@ -277,7 +278,7 @@ class ChunkedFile(object):
 
     def getvalue(self):
         """Return entire string value... used in testing."""
-        data = ""
+        data = b""
         self.len = 0
         for chunk in self:
             read_bytes = len(chunk)
@@ -315,12 +316,15 @@ class Store(glance_store.driver.Store):
         self.s3_host = self._option_get('s3_store_host')
         access_key = self._option_get('s3_store_access_key')
         secret_key = self._option_get('s3_store_secret_key')
-        # NOTE(jaypipes): Need to encode to UTF-8 here because of a
-        # bug in the HMAC library that boto uses.
-        # See: http://bugs.python.org/issue5285
-        # See: http://trac.edgewall.org/ticket/8083
-        self.access_key = access_key.encode('utf-8')
-        self.secret_key = secret_key.encode('utf-8')
+        if six.PY2:
+            # NOTE(jaypipes): Need to encode to UTF-8 here because of a
+            # bug in the HMAC library that boto uses.
+            # See: http://bugs.python.org/issue5285
+            # See: http://trac.edgewall.org/ticket/8083
+            access_key = access_key.encode('utf-8')
+            secret_key = secret_key.encode('utf-8')
+        self.access_key = access_key
+        self.secret_key = secret_key
         self.bucket = self._option_get('s3_store_bucket')
 
         self.scheme = 's3'
@@ -583,7 +587,7 @@ class Store(glance_store.driver.Store):
         write_chunk_size = max(self.s3_store_large_object_chunk_size,
                                chunk_size)
         it = utils.chunkreadable(image_file, self.WRITE_CHUNKSIZE)
-        buffered_chunk = ''
+        buffered_chunk = b''
         while True:
             try:
                 buffered_clen = len(buffered_chunk)
@@ -740,7 +744,7 @@ def create_bucket_if_missing(conf, bucket, s3_conn):
     try:
         s3_conn.get_bucket(bucket)
     except S3ResponseError as e:
-        if e.status == httplib.NOT_FOUND:
+        if e.status == http_client.NOT_FOUND:
             if conf.glance_store.s3_store_create_bucket_on_put:
                 host = conf.glance_store.s3_store_host
                 location = get_s3_location(host)
@@ -792,7 +796,7 @@ def get_calling_format(bucket_format=None,
 
 def get_mpu_xml(pedict):
     xml = '<CompleteMultipartUpload>\n'
-    for pnum, etag in pedict.iteritems():
+    for pnum, etag in six.iteritems(pedict):
         xml += '  <Part>\n'
         xml += '    <PartNumber>%d</PartNumber>\n' % pnum
         xml += '    <ETag>%s</ETag>\n' % etag
