@@ -1,3 +1,9 @@
+python-glance-store (0.4.0-4) unstable; urgency=medium
+
+  * Disabled test that fails with python-mock >= 1.3 (Closes: #795588).
+
+ -- Thomas Goirand <zigo@debian.org>  Tue, 25 Aug 2015 14:25:23 +0000
+
 python-glance-store (0.4.0-3) unstable; urgency=medium
 
   * Made build reproducible (Closes: #788502), thanks to Juan Picca.
