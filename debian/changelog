@@ -1,3 +1,10 @@
+python-glance-store (0.9.1-1) UNRELEASED; urgency=medium
+
+  * New upstream release.
+  * Reviewed (build-)depends for this release.
+
+ -- James Page <james.page@ubuntu.com>  Mon, 28 Sep 2015 12:08:32 +0100
+
 python-glance-store (0.7.1-1) experimental; urgency=medium
 
   * New upstream release.
