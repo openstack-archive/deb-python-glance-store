@@ -32,7 +32,7 @@ ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
 		rm -rf .testrepository ; \
 		testr-python$$PYMAJOR init ; \
 		TEMP_REZ=`mktemp -t` ; \
-		PYTHONPATH=$(CURDIR) PYTHON=python$$i testr-python$$PYMAJOR run --subunit 'tests\.(?!.*OptsTestCase\.test_list_api_opts.*)' | tee $$TEMP_REZ | subunit2pyunit ; \
+		PYTHONPATH=$(CURDIR) PYTHON=python$$i testr-python$$PYMAJOR run --subunit 'glance_store\.tests\.unit\.(?!(.*OptsTestCase\.test_list_api_opts.*|.*test_swift_store.TestStoreAuthV1.test_read_acl_public.*|.*test_swift_store.TestStoreAuthV1.test_read_acl_tenants.*|.*test_swift_store.TestStoreAuthV1.test_write_acls.*|.*test_swift_store.TestStoreAuthV2.test_read_acl_public.*|.*test_swift_store.TestStoreAuthV2.test_read_acl_tenants.*|.*test_swift_store.TestStoreAuthV2.test_write_acls.*|.*test_swift_store.TestStoreAuthV3.test_read_acl_public.*|.*test_swift_store.TestStoreAuthV3.test_read_acl_tenants.*|.*test_swift_store.TestStoreAuthV3.test_write_acls.*))' | tee $$TEMP_REZ | subunit2pyunit ; \
 		cat $$TEMP_REZ | subunit-filter -s --no-passthrough | subunit-stats ; \
 		rm -f $$TEMP_REZ ; \
 		testr-python$$PYMAJOR slowest ; \

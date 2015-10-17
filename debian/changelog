@@ -1,6 +1,16 @@
 python-glance-store (0.9.1-2) unstable; urgency=medium
 
   * Uploading to unstable.
+  * Black list 9 more unit tests:
+    - test_swift_store.TestStoreAuthV1.test_read_acl_public
+    - test_swift_store.TestStoreAuthV1.test_read_acl_tenants
+    - test_swift_store.TestStoreAuthV1.test_write_acls
+    - test_swift_store.TestStoreAuthV2.test_read_acl_public
+    - test_swift_store.TestStoreAuthV2.test_read_acl_tenants
+    - test_swift_store.TestStoreAuthV2.test_write_acls
+    - test_swift_store.TestStoreAuthV3.test_read_acl_public
+    - test_swift_store.TestStoreAuthV3.test_read_acl_tenants
+    - test_swift_store.TestStoreAuthV3.test_write_acls
 
  -- Thomas Goirand <zigo@debian.org>  Fri, 16 Oct 2015 09:35:58 +0000
 
