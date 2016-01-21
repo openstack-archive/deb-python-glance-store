@@ -37,6 +37,7 @@ from six.moves import range
 from six.moves import urllib
 
 from glance_store import exceptions
+from glance_store.i18n import _
 
 
 LOG = logging.getLogger(__name__)
@@ -125,7 +126,7 @@ class KeystoneStrategy(BaseStrategy):
 
         self.check_auth_params()
         auth_url = self.creds['auth_url']
-        for _ in range(self.MAX_REDIRECTS):
+        for __ in range(self.MAX_REDIRECTS):
             try:
                 _authenticate(auth_url)
             except exceptions.AuthorizationRedirect as e:
