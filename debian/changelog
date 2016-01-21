@@ -3,6 +3,7 @@ python-glance-store (0.10.0-1) experimental; urgency=medium
   * New upstream release.
   * Fixed (build-)depends for this release.
   * Fixed debian/copyright ordering.
+  * Reactivate failed tests.
 
  -- Thomas Goirand <zigo@debian.org>  Thu, 21 Jan 2016 08:31:34 +0000
 
