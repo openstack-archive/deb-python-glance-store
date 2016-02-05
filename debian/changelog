@@ -2,6 +2,7 @@ python-glance-store (0.10.0-2) experimental; urgency=medium
 
   * Added Python 3 support.
   * Fixed missing pymongo build-depends-indep.
+  * VCS urls using https.
 
  -- Thomas Goirand <zigo@debian.org>  Fri, 05 Feb 2016 12:48:07 +0000
 
