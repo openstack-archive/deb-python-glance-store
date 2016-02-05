@@ -22,7 +22,7 @@ override_dh_install:
 	done
 	set -e ; for pyvers in $(PYTHON3S); do \
 		python$$pyvers setup.py install --install-layout=deb \
-			--root $(CURDIR)/debian/python-glance-store; \
+			--root $(CURDIR)/debian/python3-glance-store; \
 	done
 	rm -rf $(CURDIR)/debian/python*-glance-store/usr/lib/python*/dist-packages/*.pth
 
