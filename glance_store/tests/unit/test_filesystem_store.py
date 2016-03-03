@@ -183,6 +183,19 @@ class TestStore(base.StoreBaseTest,
         self.assertEqual(expected_file_contents, new_image_contents)
         self.assertEqual(expected_file_size, new_image_file_size)
 
+    def test_add_with_verifier(self):
+        """Test that 'verifier.update' is called when verifier is provided."""
+        verifier = mock.MagicMock(name='mock_verifier')
+        self.store.chunk_size = units.Ki
+        image_id = str(uuid.uuid4())
+        file_size = units.Ki  # 1K
+        file_contents = b"*" * file_size
+        image_file = six.BytesIO(file_contents)
+
+        self.store.add(image_id, image_file, file_size, verifier=verifier)
+
+        verifier.update.assert_called_with(file_contents)
+
     def test_add_check_metadata_with_invalid_mountpoint_location(self):
         in_metadata = [{'id': 'abcdefg',
                        'mountpoint': '/xyz/images'}]
@@ -378,8 +391,9 @@ class TestStore(base.StoreBaseTest,
         """
         store_map = [self.useFixture(fixtures.TempDir()).path,
                      self.useFixture(fixtures.TempDir()).path]
-        self.conf.clear_override('filesystem_store_datadir',
-                                 group='glance_store')
+        self.conf.set_override('filesystem_store_datadir',
+                               override=None,
+                               group='glance_store')
         self.conf.set_override('filesystem_store_datadirs',
                                [store_map[0] + ":100",
                                 store_map[1] + ":200"],
@@ -491,8 +505,9 @@ class TestStore(base.StoreBaseTest,
         """
         store_map = [self.useFixture(fixtures.TempDir()).path,
                      self.useFixture(fixtures.TempDir()).path]
-        self.conf.clear_override('filesystem_store_datadir',
-                                 group='glance_store')
+        self.conf.set_override('filesystem_store_datadir',
+                               override=None,
+                               group='glance_store')
         self.conf.set_override('filesystem_store_datadirs',
                                [store_map[0] + ":100",
                                 store_map[1] + ":200",
@@ -538,8 +553,10 @@ class TestStore(base.StoreBaseTest,
         """Test adding multiple filesystem directories."""
         store_map = [self.useFixture(fixtures.TempDir()).path,
                      self.useFixture(fixtures.TempDir()).path]
-        self.conf.clear_override('filesystem_store_datadir',
-                                 group='glance_store')
+        self.conf.set_override('filesystem_store_datadir',
+                               override=None,
+                               group='glance_store')
+
         self.conf.set_override('filesystem_store_datadirs',
                                [store_map[0] + ":100",
                                 store_map[1] + ":200"],
@@ -585,8 +602,9 @@ class TestStore(base.StoreBaseTest,
         """
         store_map = [self.useFixture(fixtures.TempDir()).path,
                      self.useFixture(fixtures.TempDir()).path]
-        self.conf.clear_override('filesystem_store_datadir',
-                                 group='glance_store')
+        self.conf.set_override('filesystem_store_datadir',
+                               override=None,
+                               group='glance_store')
         self.conf.set_override('filesystem_store_datadirs',
                                [store_map[0] + ":100",
                                 store_map[1] + ":200"],

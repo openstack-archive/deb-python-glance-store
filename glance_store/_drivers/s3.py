@@ -21,8 +21,10 @@ import math
 import re
 import tempfile
 
+import debtcollector
 import eventlet
 from oslo_config import cfg
+from oslo_utils import encodeutils
 from oslo_utils import netutils
 from oslo_utils import units
 import six
@@ -303,6 +305,11 @@ class ChunkedFile(object):
             self.fp = None
 
 
+@debtcollector.removals.remove(message=("This store has been marked as "
+                                        "deprecated due to the lack of "
+                                        "support and maintenance. Its removal "
+                                        "is scheduled for tentatively N-2 "
+                                        "milestone."))
 class Store(glance_store.driver.Store):
     """An implementation of the s3 adapter."""
 
@@ -415,9 +422,9 @@ class Store(glance_store.driver.Store):
         where to find the image file, and returns a tuple of generator
         (for reading the image file) and image_size
 
-        :param location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
-        :raises `glance_store.exceptions.NotFound` if image does not exist
+        :raises: `glance_store.exceptions.NotFound` if image does not exist
         """
         key = self._retrieve_key(location)
         cs = self.READ_CHUNKSIZE
@@ -436,7 +443,7 @@ class Store(glance_store.driver.Store):
         where to find the image file, and returns the image_size (or 0
         if unavailable)
 
-        :param location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
         """
         try:
@@ -463,7 +470,8 @@ class Store(glance_store.driver.Store):
         return key
 
     @capabilities.check
-    def add(self, image_id, image_file, image_size, context=None):
+    def add(self, image_id, image_file, image_size, context=None,
+            verifier=None):
         """
         Stores an image file with supplied identifier to the backend
         storage system and returns a tuple containing information
@@ -472,10 +480,11 @@ class Store(glance_store.driver.Store):
         :param image_id: The opaque image identifier
         :param image_file: The image data to write, as a file-like object
         :param image_size: The size of the image data to write, in bytes
+        :param verifier: An object used to verify signatures for images
 
-        :retval tuple of URL in backing store, bytes written, checksum
+        :retval: tuple of URL in backing store, bytes written, checksum
                 and a dictionary with storage system specific information
-        :raises `glance_store.exceptions.Duplicate` if the image already
+        :raises: `glance_store.exceptions.Duplicate` if the image already
                 existed
 
         S3 writes the image data using the scheme:
@@ -517,23 +526,25 @@ class Store(glance_store.driver.Store):
                   self._sanitize(loc.get_uri()))
 
         if image_size < self.s3_store_large_object_size:
-            return self.add_singlepart(image_file, bucket_obj, obj_name, loc)
+            return self.add_singlepart(image_file, bucket_obj, obj_name, loc,
+                                       verifier)
         else:
             return self.add_multipart(image_file, image_size, bucket_obj,
-                                      obj_name, loc)
+                                      obj_name, loc, verifier)
 
     def _sanitize(self, uri):
         return re.sub('//.*:.*@',
                       '//s3_store_secret_key:s3_store_access_key@',
                       uri)
 
-    def add_singlepart(self, image_file, bucket_obj, obj_name, loc):
+    def add_singlepart(self, image_file, bucket_obj, obj_name, loc, verifier):
         """
         Stores an image file with a single part upload to S3 backend
 
         :param image_file: The image data to write, as a file-like object
         :param bucket_obj: S3 bucket object
         :param obj_name: The object name to be stored(image identifier)
+        :param verifier: An object used to verify signatures for images
         :loc: The Store Location Info
         """
 
@@ -560,6 +571,8 @@ class Store(glance_store.driver.Store):
         checksum = hashlib.md5()
         for chunk in utils.chunkreadable(image_file, self.WRITE_CHUNKSIZE):
             checksum.update(chunk)
+            if verifier:
+                verifier.update(chunk)
             temp_file.write(chunk)
         temp_file.flush()
 
@@ -581,13 +594,15 @@ class Store(glance_store.driver.Store):
 
         return (loc.get_uri(), size, checksum_hex, {})
 
-    def add_multipart(self, image_file, image_size, bucket_obj, obj_name, loc):
+    def add_multipart(self, image_file, image_size, bucket_obj, obj_name, loc,
+                      verifier):
         """
         Stores an image file with a multi part upload to S3 backend
 
         :param image_file: The image data to write, as a file-like object
         :param bucket_obj: S3 bucket object
         :param obj_name: The object name to be stored(image identifier)
+        :param verifier: An object used to verify signatures for images
         :loc: The Store Location Info
         """
 
@@ -619,6 +634,8 @@ class Store(glance_store.driver.Store):
                     write_chunk = buffered_chunk[:write_chunk_size]
                     remained_data = buffered_chunk[write_chunk_size:]
                     checksum.update(write_chunk)
+                    if verifier:
+                        verifier.update(write_chunk)
                     fp = six.BytesIO(write_chunk)
                     fp.seek(0)
                     part = UploadPart(mpu, fp, cstart + 1, len(write_chunk))
@@ -631,6 +648,8 @@ class Store(glance_store.driver.Store):
                     # Write the last chunk data
                     write_chunk = buffered_chunk
                     checksum.update(write_chunk)
+                    if verifier:
+                        verifier.update(write_chunk)
                     fp = six.BytesIO(write_chunk)
                     fp.seek(0)
                     part = UploadPart(mpu, fp, cstart + 1, len(write_chunk))
@@ -684,10 +703,10 @@ class Store(glance_store.driver.Store):
         Takes a `glance_store.location.Location` object that indicates
         where to find the image file to delete
 
-        :location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                   from glance_store.location.get_location_from_uri()
 
-        :raises NotFound if image does not exist
+        :raises: NotFound if image does not exist
         """
         loc = location.store_location
         s3_conn = self._create_connection(loc)
@@ -713,7 +732,7 @@ def get_bucket(conn, bucket_id):
 
     :param conn: The ``boto.s3.connection.S3Connection``
     :param bucket_id: ID of the bucket to fetch
-    :raises ``glance_store.exceptions.NotFound`` if bucket is not found.
+    :raises: ``glance_store.exceptions.NotFound`` if bucket is not found.
     """
 
     bucket = conn.get_bucket(bucket_id)
@@ -763,7 +782,7 @@ def create_bucket_if_missing(conf, bucket, s3_conn):
                 except S3ResponseError as e:
                     msg = (_("Failed to add bucket to S3.\n"
                              "Got error from S3: %s.") %
-                           utils.exception_to_str(e))
+                           encodeutils.exception_to_unicode(e))
                     raise glance_store.BackendException(msg)
             else:
                 msg = (_("The bucket %(bucket)s does not exist in "
@@ -780,7 +799,7 @@ def get_key(bucket, obj):
 
     :param bucket: The ``boto.s3.Bucket``
     :param obj: Object to get the key for
-    :raises ``glance_store.exceptions.NotFound`` if key is not found.
+    :raises: ``glance_store.exceptions.NotFound`` if key is not found.
     """
 
     key = bucket.get_key(obj)

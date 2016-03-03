@@ -240,9 +240,9 @@ class Store(driver.Store):
         where to find the image file, and returns a tuple of generator
         (for reading the image file) and image_size
 
-        :param location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
-        :raises `glance_store.exceptions.NotFound` if image does not exist
+        :raises: `glance_store.exceptions.NotFound` if image does not exist
         """
         loc = location.store_location
         return (ImageIterator(loc.pool, loc.image, loc.snapshot, self),
@@ -253,9 +253,9 @@ class Store(driver.Store):
         Takes a `glance_store.location.Location` object that indicates
         where to find the image file, and returns the size
 
-        :param location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
-        :raises `glance_store.exceptions.NotFound` if image does not exist
+        :raises: `glance_store.exceptions.NotFound` if image does not exist
         """
         loc = location.store_location
         # if there is a pool specific in the location, use it; otherwise
@@ -281,9 +281,9 @@ class Store(driver.Store):
         make it a cloneable snapshot, so that copy-on-write
         volumes can be created from it.
 
-        :param image_name Image's name
+        :param image_name: Image's name
 
-        :retval `glance_store.rbd.StoreLocation` object
+        :retval: `glance_store.rbd.StoreLocation` object
         """
         librbd = rbd.RBD()
         features = conn.conf_get('rbd_default_features')
@@ -303,10 +303,10 @@ class Store(driver.Store):
         """
         Delete RBD image and snapshot.
 
-        :param image_name Image's name
-        :param snapshot_name Image snapshot's name
+        :param image_name: Image's name
+        :param snapshot_name: Image snapshot's name
 
-        :raises NotFound if image does not exist;
+        :raises: NotFound if image does not exist;
                 InUseByStore if image is in use or snapshot unprotect failed
         """
         with self.get_connection(conffile=self.conf_file,
@@ -318,29 +318,42 @@ class Store(driver.Store):
                         with rbd.Image(ioctx, image_name) as image:
                             try:
                                 image.unprotect_snap(snapshot_name)
-                            except rbd.ImageBusy:
-                                log_msg = _("snapshot %(image)s@%(snap)s "
-                                            "could not be unprotected because "
-                                            "it is in use")
-                                LOG.debug(log_msg %
-                                          {'image': image_name,
-                                           'snap': snapshot_name})
+                                image.remove_snap(snapshot_name)
+                            except rbd.ImageNotFound as exc:
+                                msg = (_("Snap Operating Exception "
+                                         "%(snap_exc)s "
+                                         "Snapshot does not exist.") %
+                                       {'snap_exc': exc})
+                                LOG.debug(msg)
+                            except rbd.ImageBusy as exc:
+                                log_msg = (_LE("Snap Operating Exception "
+                                               "%(snap_exc)s "
+                                               "Snapshot is in use.") %
+                                           {'snap_exc': exc})
+                                LOG.error(log_msg)
                                 raise exceptions.InUseByStore()
-                            image.remove_snap(snapshot_name)
 
                     # Then delete image.
                     rbd.RBD().remove(ioctx, image_name)
+                except rbd.ImageHasSnapshots:
+                    log_msg = (_LE("Remove image %(img_name)s failed. "
+                                   "It has snapshot(s) left.") %
+                               {'img_name': image_name})
+                    LOG.error(log_msg)
+                    raise exceptions.HasSnapshot()
+                except rbd.ImageBusy:
+                    log_msg = (_LE("Remove image %(img_name)s failed. "
+                                   "It is in use.") %
+                               {'img_name': image_name})
+                    LOG.error(log_msg)
+                    raise exceptions.InUseByStore()
                 except rbd.ImageNotFound:
                     msg = _("RBD image %s does not exist") % image_name
                     raise exceptions.NotFound(message=msg)
-                except rbd.ImageBusy:
-                    log_msg = _("image %s could not be removed "
-                                "because it is in use")
-                    LOG.debug(log_msg % image_name)
-                    raise exceptions.InUseByStore()
 
     @capabilities.check
-    def add(self, image_id, image_file, image_size, context=None):
+    def add(self, image_id, image_file, image_size, context=None,
+            verifier=None):
         """
         Stores an image file with supplied identifier to the backend
         storage system and returns a tuple containing information
@@ -349,10 +362,11 @@ class Store(driver.Store):
         :param image_id: The opaque image identifier
         :param image_file: The image data to write, as a file-like object
         :param image_size: The size of the image data to write, in bytes
+        :param verifier: An object used to verify signatures for images
 
-        :retval tuple of URL in backing store, bytes written, checksum
+        :retval: tuple of URL in backing store, bytes written, checksum
                 and a dictionary with storage system specific information
-        :raises `glance_store.exceptions.Duplicate` if the image already
+        :raises: `glance_store.exceptions.Duplicate` if the image already
                 existed
         """
         checksum = hashlib.md5()
@@ -400,6 +414,8 @@ class Store(driver.Store):
                                       (offset))
                             offset += image.write(chunk, offset)
                             checksum.update(chunk)
+                            if verifier:
+                                verifier.update(chunk)
                         if loc.snapshot:
                             image.create_snap(loc.snapshot)
                             image.protect_snap(loc.snapshot)
@@ -432,10 +448,10 @@ class Store(driver.Store):
         Takes a `glance_store.location.Location` object that indicates
         where to find the image file to delete.
 
-        :location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                   from glance_store.location.get_location_from_uri()
 
-        :raises NotFound if image does not exist;
+        :raises: NotFound if image does not exist;
                 InUseByStore if image is in use or snapshot unprotect failed
         """
         loc = location.store_location

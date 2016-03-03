@@ -71,6 +71,9 @@ class MockRBD(object):
     class ImageExists(Exception):
         pass
 
+    class ImageHasSnapshots(Exception):
+        pass
+
     class ImageBusy(Exception):
         pass
 
@@ -224,6 +227,20 @@ class TestStore(base.StoreBaseTest,
                               'fake_image_id', self.data_iter, self.data_len)
             self.called_commands_expected = ['create']
 
+    def test_add_with_verifier(self):
+        """Assert 'verifier.update' is called when verifier is provided."""
+        self.store.chunk_size = units.Ki
+        verifier = mock.MagicMock(name='mock_verifier')
+        image_id = 'fake_image_id'
+        file_size = 5 * units.Ki  # 5K
+        file_contents = b"*" * file_size
+        image_file = six.BytesIO(file_contents)
+
+        with mock.patch.object(rbd_store.rbd.Image, 'write'):
+            self.store.add(image_id, image_file, file_size, verifier=verifier)
+
+        verifier.update.assert_called_with(file_contents)
+
     def test_delete(self):
         def _fake_remove(*args, **kwargs):
             self.called_commands_actual.append('remove')
@@ -245,6 +262,18 @@ class TestStore(base.StoreBaseTest,
             remove_image.side_effect = _fake_remove
 
             self.store._delete_image('fake_pool', self.location.image)
+            self.called_commands_expected = ['remove']
+
+    def test_delete_image_exc_image_not_found(self):
+        def _fake_remove(*args, **kwargs):
+            self.called_commands_actual.append('remove')
+            raise MockRBD.ImageNotFound()
+
+        with mock.patch.object(MockRBD.RBD, 'remove') as remove:
+            remove.side_effect = _fake_remove
+            self.assertRaises(exceptions.NotFound, self.store._delete_image,
+                              'fake_pool', self.location.image)
+
             self.called_commands_expected = ['remove']
 
     @mock.patch.object(MockRBD.RBD, 'remove')
@@ -269,30 +298,30 @@ class TestStore(base.StoreBaseTest,
         self.called_commands_expected = ['unprotect_snap', 'remove_snap',
                                          'remove']
 
-    def test_delete_image_w_snap_exc_image_not_found(self):
+    def test_delete_image_w_snap_exc_image_busy(self):
         def _fake_unprotect_snap(*args, **kwargs):
             self.called_commands_actual.append('unprotect_snap')
-            raise MockRBD.ImageNotFound()
+            raise MockRBD.ImageBusy()
 
         with mock.patch.object(MockRBD.Image, 'unprotect_snap') as mocked:
             mocked.side_effect = _fake_unprotect_snap
 
-            self.assertRaises(exceptions.NotFound, self.store._delete_image,
+            self.assertRaises(exceptions.InUseByStore,
+                              self.store._delete_image,
                               'fake_pool', self.location.image,
                               snapshot_name='snap')
 
             self.called_commands_expected = ['unprotect_snap']
 
-    def test_delete_image_exc_image_not_found(self):
+    def test_delete_image_w_snap_exc_image_has_snap(self):
         def _fake_remove(*args, **kwargs):
             self.called_commands_actual.append('remove')
-            raise MockRBD.ImageNotFound()
+            raise MockRBD.ImageHasSnapshots()
 
         with mock.patch.object(MockRBD.RBD, 'remove') as remove:
             remove.side_effect = _fake_remove
-            self.assertRaises(exceptions.NotFound, self.store._delete_image,
-                              'fake_pool', self.location.image,
-                              snapshot_name='snap')
+            self.assertRaises(exceptions.HasSnapshot, self.store._delete_image,
+                              'fake_pool', self.location.image)
 
             self.called_commands_expected = ['remove']
 

@@ -16,12 +16,12 @@
 import logging
 
 from oslo_config import cfg
+from oslo_utils import encodeutils
 import six
 from stevedore import driver
 from stevedore import extension
 
 from glance_store import capabilities
-from glance_store.common import utils
 from glance_store import exceptions
 from glance_store import i18n
 from glance_store import location
@@ -34,7 +34,9 @@ _ = i18n._
 
 _STORE_OPTS = [
     cfg.ListOpt('stores', default=['file', 'http'],
-                help=_('List of stores enabled')),
+                help=_("List of stores enabled. Valid stores are: "
+                       "cinder, file, http, rbd, sheepdog, swift, "
+                       "s3, vsphere")),
     cfg.StrOpt('default_store', default='file',
                help=_("Default scheme to use to store image data. The "
                       "scheme must be registered by one of the stores "
@@ -153,8 +155,8 @@ def _load_store(conf, store_entry, invoke_load=True):
                                    invoke_on_load=invoke_load)
         return mgr.driver
     except RuntimeError as e:
-        LOG.warn("Failed to load driver %(driver)s."
-                 "The driver will be disabled" % dict(driver=str([driver, e])))
+        LOG.warning("Failed to load driver %(driver)s. The "
+                    "driver will be disabled" % dict(driver=str([driver, e])))
 
 
 def _load_stores(conf):
@@ -320,7 +322,8 @@ def check_location_metadata(val, key=''):
                                           % dict(key=key, type=type(val)))
 
 
-def store_add_to_backend(image_id, data, size, store, context=None):
+def store_add_to_backend(image_id, data, size, store, context=None,
+                         verifier=None):
     """
     A wrapper around a call to each stores add() method.  This gives glance
     a common place to check the output
@@ -337,7 +340,8 @@ def store_add_to_backend(image_id, data, size, store, context=None):
     (location, size, checksum, metadata) = store.add(image_id,
                                                      data,
                                                      size,
-                                                     context=context)
+                                                     context=context,
+                                                     verifier=verifier)
     if metadata is not None:
         if not isinstance(metadata, dict):
             msg = (_("The storage driver %(driver)s returned invalid "
@@ -350,19 +354,21 @@ def store_add_to_backend(image_id, data, size, store, context=None):
         except exceptions.BackendException as e:
             e_msg = (_("A bad metadata structure was returned from the "
                        "%(driver)s storage driver: %(metadata)s.  %(e)s.") %
-                     dict(driver=utils.exception_to_str(store),
-                          metadata=utils.exception_to_str(metadata),
-                          e=utils.exception_to_str(e)))
+                     dict(driver=encodeutils.exception_to_unicode(store),
+                          metadata=encodeutils.exception_to_unicode(metadata),
+                          e=encodeutils.exception_to_unicode(e)))
             LOG.error(e_msg)
             raise exceptions.BackendException(e_msg)
     return (location, size, checksum, metadata)
 
 
-def add_to_backend(conf, image_id, data, size, scheme=None, context=None):
+def add_to_backend(conf, image_id, data, size, scheme=None, context=None,
+                   verifier=None):
     if scheme is None:
         scheme = conf['glance_store']['default_store']
     store = get_store_from_scheme(scheme)
-    return store_add_to_backend(image_id, data, size, store, context)
+    return store_add_to_backend(image_id, data, size, store, context,
+                                verifier)
 
 
 def set_acls(location_uri, public=False, read_tenants=[],

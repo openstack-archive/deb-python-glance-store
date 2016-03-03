@@ -19,11 +19,11 @@
 import logging
 
 from oslo_config import cfg
+from oslo_utils import encodeutils
 from oslo_utils import importutils
 from oslo_utils import units
 
 from glance_store import capabilities
-from glance_store.common import utils
 from glance_store import exceptions
 from glance_store import i18n
 
@@ -67,8 +67,9 @@ class Store(capabilities.StoreCapability):
         except exceptions.BadStoreConfiguration as e:
             self.unset_capabilities(capabilities.BitMasks.WRITE_ACCESS)
             msg = (_(u"Failed to configure store correctly: %s "
-                     "Disabling add method.") % utils.exception_to_str(e))
-            LOG.warn(msg)
+                     "Disabling add method.")
+                   % encodeutils.exception_to_unicode(e))
+            LOG.warning(msg)
             if re_raise_bsc:
                 raise
         finally:
@@ -107,9 +108,9 @@ class Store(capabilities.StoreCapability):
         where to find the image file, and returns a tuple of generator
         (for reading the image file) and image_size
 
-        :param location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
-        :raises `glance.exceptions.NotFound` if image does not exist
+        :raises: `glance.exceptions.NotFound` if image does not exist
         """
         raise NotImplementedError
 
@@ -118,14 +119,15 @@ class Store(capabilities.StoreCapability):
         Takes a `glance_store.location.Location` object that indicates
         where to find the image file, and returns the size
 
-        :param location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
-        :raises `glance_store.exceptions.NotFound` if image does not exist
+        :raises: `glance_store.exceptions.NotFound` if image does not exist
         """
         raise NotImplementedError
 
     @capabilities.check
-    def add(self, image_id, image_file, image_size, context=None):
+    def add(self, image_id, image_file, image_size, context=None,
+            verifier=None):
         """
         Stores an image file with supplied identifier to the backend
         storage system and returns a tuple containing information
@@ -135,9 +137,9 @@ class Store(capabilities.StoreCapability):
         :param image_file: The image data to write, as a file-like object
         :param image_size: The size of the image data to write, in bytes
 
-        :retval tuple of URL in backing store, bytes written, checksum
+        :retval: tuple of URL in backing store, bytes written, checksum
                and a dictionary with storage system specific information
-        :raises `glance_store.exceptions.Duplicate` if the image already
+        :raises: `glance_store.exceptions.Duplicate` if the image already
                 existed
         """
         raise NotImplementedError
@@ -148,24 +150,24 @@ class Store(capabilities.StoreCapability):
         Takes a `glance_store.location.Location` object that indicates
         where to find the image file to delete
 
-        :location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                   from glance_store.location.get_location_from_uri()
-        :raises `glance_store.exceptions.NotFound` if image does not exist
+        :raises: `glance_store.exceptions.NotFound` if image does not exist
         """
         raise NotImplementedError
 
-    def set_acls(self, location, public=False, read_tenants=[],
-                 write_tenants=[], context=None):
+    def set_acls(self, location, public=False, read_tenants=None,
+                 write_tenants=None, context=None):
         """
         Sets the read and write access control list for an image in the
         backend store.
 
-        :location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                   from glance_store.location.get_location_from_uri()
-        :public A boolean indicating whether the image should be public.
-        :read_tenants A list of tenant strings which should be granted
+        :param public: A boolean indicating whether the image should be public.
+        :param read_tenants: A list of tenant strings which should be granted
                       read access for an image.
-        :write_tenants A list of tenant strings which should be granted
+        :param write_tenants: A list of tenant strings which should be granted
                       write access for an image.
         """
         raise NotImplementedError

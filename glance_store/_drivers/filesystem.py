@@ -27,6 +27,7 @@ import stat
 import jsonschema
 from oslo_config import cfg
 from oslo_serialization import jsonutils
+from oslo_utils import encodeutils
 from oslo_utils import excutils
 from oslo_utils import units
 from six.moves import urllib
@@ -47,6 +48,7 @@ _LW = i18n._LW
 
 _FILESYSTEM_CONFIGS = [
     cfg.StrOpt('filesystem_store_datadir',
+               default='/var/lib/glance/images',
                help=_('Directory to which the Filesystem backend '
                       'store writes images.')),
     cfg.MultiStrOpt('filesystem_store_datadirs',
@@ -175,7 +177,7 @@ class Store(glance_store.driver.Store):
         write permission.
 
         :datadir is a directory path in which glance wites image files.
-        :raise BadStoreConfiguration exception if datadir is read-only.
+        :raises: BadStoreConfiguration exception if datadir is read-only.
         """
         if not os.access(datadir, os.W_OK):
             msg = (_("Permission to write in %s denied") % datadir)
@@ -209,8 +211,9 @@ class Store(glance_store.driver.Store):
                     # chmod g+x
                     os.chmod(datadir, mode | stat.S_IXGRP)
         except (IOError, OSError):
-            LOG.warn(_LW("Unable to set execution permission of owner-group "
-                         "and/or other-users to datadir: %s") % datadir)
+            LOG.warning(_LW("Unable to set execution permission of "
+                            "owner-group and/or other-users to datadir: %s")
+                        % datadir)
 
     def _create_image_directories(self, directory_paths):
         """
@@ -218,7 +221,7 @@ class Store(glance_store.driver.Store):
         it does not exist.
 
         :directory_paths is a list of directories belonging to glance store.
-        :raise BadStoreConfiguration exception if creating a directory fails.
+        :raises: BadStoreConfiguration exception if creating a directory fails.
         """
         for datadir in directory_paths:
             if os.path.exists(datadir):
@@ -271,18 +274,20 @@ class Store(glance_store.driver.Store):
             self.FILESYSTEM_STORE_METADATA = metadata
         except (jsonschema.exceptions.ValidationError,
                 exceptions.BackendException, ValueError) as vee:
+            err_msg = encodeutils.exception_to_unicode(vee)
             reason = _('The JSON in the metadata file %(file)s is '
                        'not valid and it can not be used: '
                        '%(vee)s.') % dict(file=metadata_file,
-                                          vee=utils.exception_to_str(vee))
+                                          vee=err_msg)
             LOG.error(reason)
             raise exceptions.BadStoreConfiguration(
                 store_name="filesystem", reason=reason)
         except IOError as ioe:
+            err_msg = encodeutils.exception_to_unicode(ioe)
             reason = _('The path for the metadata file %(file)s could '
                        'not be accessed: '
                        '%(ioe)s.') % dict(file=metadata_file,
-                                          ioe=utils.exception_to_str(ioe))
+                                          ioe=err_msg)
             LOG.error(reason)
             raise exceptions.BadStoreConfiguration(
                 store_name="filesystem", reason=reason)
@@ -358,7 +363,7 @@ class Store(glance_store.driver.Store):
 
         :datadir_path is directory path.
         :datadir_paths is set of all directory paths.
-        :raise BadStoreConfiguration exception if same directory path is
+        :raises: BadStoreConfiguration exception if same directory path is
                already present in directory_paths.
         """
         if datadir_path in directory_paths:
@@ -381,10 +386,10 @@ class Store(glance_store.driver.Store):
         Gets directory paths and its priority from
         filesystem_store_datadirs option in glance-api.conf.
 
-        :datadir is directory path with its priority.
-        :returns datadir_path as directory path
+        :param datadir: is directory path with its priority.
+        :returns: datadir_path as directory path
                  priority as priority associated with datadir_path
-        :raise BadStoreConfiguration exception if priority is invalid or
+        :raises: BadStoreConfiguration exception if priority is invalid or
                empty directory path is specified.
         """
         priority = 0
@@ -460,9 +465,9 @@ class Store(glance_store.driver.Store):
         where to find the image file, and returns a tuple of generator
         (for reading the image file) and image_size
 
-        :param location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
-        :raises `glance_store.exceptions.NotFound` if image does not exist
+        :raises: `glance_store.exceptions.NotFound` if image does not exist
         """
         filepath, filesize = self._resolve_location(location)
         msg = _("Found image at %s. Returning in ChunkedFile.") % filepath
@@ -478,9 +483,9 @@ class Store(glance_store.driver.Store):
         Takes a `glance_store.location.Location` object that indicates
         where to find the image file and returns the image size
 
-        :param location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
-        :raises `glance_store.exceptions.NotFound` if image does not exist
+        :raises: `glance_store.exceptions.NotFound` if image does not exist
         :rtype int
         """
         filepath, filesize = self._resolve_location(location)
@@ -494,11 +499,11 @@ class Store(glance_store.driver.Store):
         Takes a `glance_store.location.Location` object that indicates
         where to find the image file to delete
 
-        :location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                   from glance_store.location.get_location_from_uri()
 
-        :raises NotFound if image does not exist
-        :raises Forbidden if cannot delete because of permissions
+        :raises: NotFound if image does not exist
+        :raises: Forbidden if cannot delete because of permissions
         """
         loc = location.store_location
         fn = loc.path
@@ -530,9 +535,9 @@ class Store(glance_store.driver.Store):
         free space, in priority order. If two suitable directories have
         the same priority, choose the one with the most free space
         available.
-        :image_size size of image being uploaded.
-        :returns best_datadir as directory path of the best priority datadir.
-        :raises exceptions.StorageFull if there is no datadir in
+        :param image_size: size of image being uploaded.
+        :returns: best_datadir as directory path of the best priority datadir.
+        :raises: exceptions.StorageFull if there is no datadir in
                 self.priority_data_map that can accommodate the image.
         """
         if not self.multiple_datadirs:
@@ -561,7 +566,8 @@ class Store(glance_store.driver.Store):
         return best_datadir
 
     @capabilities.check
-    def add(self, image_id, image_file, image_size, context=None):
+    def add(self, image_id, image_file, image_size, context=None,
+            verifier=None):
         """
         Stores an image file with supplied identifier to the backend
         storage system and returns a tuple containing information
@@ -570,13 +576,14 @@ class Store(glance_store.driver.Store):
         :param image_id: The opaque image identifier
         :param image_file: The image data to write, as a file-like object
         :param image_size: The size of the image data to write, in bytes
+        :param verifier: An object used to verify signatures for images
 
-        :retval tuple of URL in backing store, bytes written, checksum
+        :retval: tuple of URL in backing store, bytes written, checksum
                 and a dictionary with storage system specific information
-        :raises `glance_store.exceptions.Duplicate` if the image already
+        :raises: `glance_store.exceptions.Duplicate` if the image already
                 existed
 
-        :note By default, the backend writes the image data to a file
+        :note:: By default, the backend writes the image data to a file
               `/<DATADIR>/<ID>`, where <DATADIR> is the value of
               the filesystem_store_datadir configuration option and <ID>
               is the supplied image ID.
@@ -596,6 +603,8 @@ class Store(glance_store.driver.Store):
                                                self.WRITE_CHUNKSIZE):
                     bytes_written += len(buf)
                     checksum.update(buf)
+                    if verifier:
+                        verifier.update(buf)
                     f.write(buf)
         except IOError as e:
             if e.errno != errno.EACCES:
@@ -623,8 +632,8 @@ class Store(glance_store.driver.Store):
             try:
                 os.chmod(filepath, perm)
             except (IOError, OSError):
-                LOG.warn(_LW("Unable to set permission to image: %s") %
-                         filepath)
+                LOG.warning(_LW("Unable to set permission to image: %s") %
+                            filepath)
 
         return ('file://%s' % filepath, bytes_written, checksum_hex, metadata)
 
@@ -635,4 +644,5 @@ class Store(glance_store.driver.Store):
         except Exception as e:
             msg = _('Unable to remove partial image '
                     'data for image %(iid)s: %(e)s')
-            LOG.error(msg % dict(iid=iid, e=utils.exception_to_str(e)))
+            LOG.error(msg % dict(iid=iid,
+                                 e=encodeutils.exception_to_unicode(e)))

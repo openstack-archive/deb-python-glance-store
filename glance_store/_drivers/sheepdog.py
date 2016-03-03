@@ -1,4 +1,5 @@
 # Copyright 2013 Taobao Inc.
+# Copyright (C) 2016 Nippon Telegraph and Telephone Corporation.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -25,6 +26,7 @@ from oslo_utils import units
 
 import glance_store
 from glance_store import capabilities
+from glance_store.common import utils
 import glance_store.driver
 from glance_store import exceptions
 from glance_store.i18n import _
@@ -76,12 +78,12 @@ class SheepdogImage(object):
 
     def get_size(self):
         """
-        Return the size of the this iamge
+        Return the size of the this image
 
         Sheepdog Usage: collie vdi list -r -a address -p port image
         """
         out = self._run_command("list -r", None)
-        return long(out.split(' ')[3])
+        return int(out.split(' ')[3])
 
     def read(self, offset, count):
         """
@@ -109,6 +111,13 @@ class SheepdogImage(object):
         """
         self._run_command("create", None, str(size))
 
+    def resize(self, size):
+        """Resize this image in the Sheepdog cluster with size 'size'.
+
+        Sheepdog Usage: collie vdi create -a address -p port image size
+        """
+        self._run_command("resize", None, str(size))
+
     def delete(self):
         """
         Delete this image in the Sheepdog cluster
@@ -134,22 +143,36 @@ class StoreLocation(glance_store.location.StoreLocation):
     """
     Class describing a Sheepdog URI. This is of the form:
 
-        sheepdog://image
+        sheepdog://addr:port:image
 
     """
 
     def process_specs(self):
         self.image = self.specs.get('image')
+        self.addr = self.specs.get('addr')
+        self.port = self.specs.get('port')
 
     def get_uri(self):
-        return "sheepdog://%s" % self.image
+        return "sheepdog://%(addr)s:%(port)d:%(image)s" % {
+            'addr': self.addr,
+            'port': self.port,
+            'image': self.image}
 
     def parse_uri(self, uri):
         valid_schema = 'sheepdog://'
         if not uri.startswith(valid_schema):
-            reason = _("URI must start with '%s://'") % valid_schema
+            reason = _("URI must start with '%s'") % valid_schema
             raise exceptions.BadStoreUri(message=reason)
-        self.image = uri[11:]
+        pieces = uri[len(valid_schema):].split(':')
+        if len(pieces) == 3:
+            self.image = pieces[2]
+            self.port = int(pieces[1])
+            self.addr = pieces[0]
+        # This is used for backwards compatibility.
+        else:
+            self.image = pieces[0]
+            self.port = self.conf.glance_store.sheepdog_store_port
+            self.addr = self.conf.glance_store.sheepdog_store_address
 
 
 class ImageIterator(object):
@@ -177,7 +200,7 @@ class Store(glance_store.driver.Store):
     _CAPABILITIES = (capabilities.BitMasks.RW_ACCESS |
                      capabilities.BitMasks.DRIVER_REUSABLE)
     OPTIONS = _SHEEPDOG_OPTS
-    EXAMPLE_URL = "sheepdog://image"
+    EXAMPLE_URL = "sheepdog://addr:port:image"
 
     def get_schemes(self):
         return ('sheepdog',)
@@ -219,13 +242,13 @@ class Store(glance_store.driver.Store):
         where to find the image file, and returns a generator for reading
         the image file
 
-        :param location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
-        :raises `glance_store.exceptions.NotFound` if image does not exist
+        :raises: `glance_store.exceptions.NotFound` if image does not exist
         """
 
         loc = location.store_location
-        image = SheepdogImage(self.addr, self.port, loc.image,
+        image = SheepdogImage(loc.addr, loc.port, loc.image,
                               self.READ_CHUNKSIZE)
         if not image.exist():
             raise exceptions.NotFound(_("Sheepdog image %s does not exist")
@@ -237,14 +260,14 @@ class Store(glance_store.driver.Store):
         Takes a `glance_store.location.Location` object that indicates
         where to find the image file and returns the image size
 
-        :param location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                         from glance_store.location.get_location_from_uri()
-        :raises `glance_store.exceptions.NotFound` if image does not exist
-        :rtype int
+        :raises: `glance_store.exceptions.NotFound` if image does not exist
+        :param rtype: int
         """
 
         loc = location.store_location
-        image = SheepdogImage(self.addr, self.port, loc.image,
+        image = SheepdogImage(loc.addr, loc.port, loc.image,
                               self.READ_CHUNKSIZE)
         if not image.exist():
             raise exceptions.NotFound(_("Sheepdog image %s does not exist")
@@ -252,7 +275,8 @@ class Store(glance_store.driver.Store):
         return image.get_size()
 
     @capabilities.check
-    def add(self, image_id, image_file, image_size, context=None):
+    def add(self, image_id, image_file, image_size, context=None,
+            verifier=None):
         """
         Stores an image file with supplied identifier to the backend
         storage system and returns a tuple containing information
@@ -261,9 +285,10 @@ class Store(glance_store.driver.Store):
         :param image_id: The opaque image identifier
         :param image_file: The image data to write, as a file-like object
         :param image_size: The size of the image data to write, in bytes
+        :param verifier: An object used to verify signatures for images
 
-        :retval tuple of URL in backing store, bytes written, and checksum
-        :raises `glance_store.exceptions.Duplicate` if the image already
+        :retval: tuple of URL in backing store, bytes written, and checksum
+        :raises: `glance_store.exceptions.Duplicate` if the image already
                 existed
         """
 
@@ -273,26 +298,38 @@ class Store(glance_store.driver.Store):
             raise exceptions.Duplicate(_("Sheepdog image %s already exists")
                                        % image_id)
 
-        location = StoreLocation({'image': image_id}, self.conf)
-        checksum = hashlib.md5()
+        location = StoreLocation({
+            'image': image_id,
+            'addr': self.addr,
+            'port': self.port
+        }, self.conf)
 
         image.create(image_size)
 
         try:
-            total = left = image_size
-            while left > 0:
-                length = min(self.chunk_size, left)
-                data = image_file.read(length)
-                image.write(data, total - left, length)
-                left -= length
-                checksum.update(data)
+            offset = 0
+            checksum = hashlib.md5()
+            chunks = utils.chunkreadable(image_file, self.WRITE_CHUNKSIZE)
+            for chunk in chunks:
+                chunk_length = len(chunk)
+                # If the image size provided is zero we need to do
+                # a resize for the amount we are writing. This will
+                # be slower so setting a higher chunk size may
+                # speed things up a bit.
+                if image_size == 0:
+                    image.resize(offset + chunk_length)
+                image.write(chunk, offset, chunk_length)
+                offset += chunk_length
+                checksum.update(chunk)
+                if verifier:
+                    verifier.update(chunk)
         except Exception:
             # Note(zhiyan): clean up already received data when
             # error occurs such as ImageSizeLimitExceeded exceptions.
             with excutils.save_and_reraise_exception():
                 image.delete()
 
-        return (location.get_uri(), image_size, checksum.hexdigest(), {})
+        return (location.get_uri(), offset, checksum.hexdigest(), {})
 
     @capabilities.check
     def delete(self, location, context=None):
@@ -300,14 +337,14 @@ class Store(glance_store.driver.Store):
         Takes a `glance_store.location.Location` object that indicates
         where to find the image file to delete
 
-        :location `glance_store.location.Location` object, supplied
+        :param location: `glance_store.location.Location` object, supplied
                   from glance_store.location.get_location_from_uri()
 
-        :raises NotFound if image does not exist
+        :raises: NotFound if image does not exist
         """
 
         loc = location.store_location
-        image = SheepdogImage(self.addr, self.port, loc.image,
+        image = SheepdogImage(loc.addr, loc.port, loc.image,
                               self.WRITE_CHUNKSIZE)
         if not image.exist():
             raise exceptions.NotFound(_("Sheepdog image %s does not exist") %
