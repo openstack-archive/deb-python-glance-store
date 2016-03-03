@@ -1,6 +1,7 @@
 python-glance-store (0.12.0-1) UNRELEASED; urgency=medium
 
   * New upstream release.
+  * d/control: Align (Build-)Depends with upstream.
 
  -- Corey Bryant <corey.bryant@canonical.com>  Thu, 03 Mar 2016 10:25:36 -0500
 
