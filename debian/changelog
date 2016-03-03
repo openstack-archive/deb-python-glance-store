@@ -1,9 +1,13 @@
-python-glance-store (0.12.0-1) UNRELEASED; urgency=medium
+python-glance-store (0.12.0-1) experimental; urgency=medium
 
+  [ Corey Bryant ]
   * New upstream release.
   * d/control: Align (Build-)Depends with upstream.
 
- -- Corey Bryant <corey.bryant@canonical.com>  Thu, 03 Mar 2016 10:25:36 -0500
+  [ Thomas Goirand ]
+  * Standards-Version: 3.9.7 (no change).
+
+ -- Thomas Goirand <zigo@debian.org>  Thu, 03 Mar 2016 19:54:18 +0000
 
 python-glance-store (0.10.0-2) experimental; urgency=medium
 
