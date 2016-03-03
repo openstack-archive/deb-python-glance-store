@@ -4,6 +4,14 @@ Source: git://github.com/openstack/glance_store.git
 
 Files: *
 Copyright: (c) 2013-2016, OpenStack Foundation <openstack-dev@lists.openstack.org>
+           (c) 2013, Taobao Inc.
+           (c) 2012-2014, Red Hat, Inc.
+           (c) 2001-2010, Twisted Matrix Laboratories.
+           (c) 2013, Nebula, Inc.
+           (c) 2013, Hewlett-Packard Development Company, L.P.
+           (c) 2013, IBM Corp.
+           (c) 2010, US Government as represented by the Adminstrator of NASA
+           (c) 2014, Rackspace
 License: Apache-2
 
 Files: debian/*
