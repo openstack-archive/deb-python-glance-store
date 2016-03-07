@@ -1,6 +1,7 @@
 python-glance-store (0.13.0-1) UNRELEASED; urgency=medium
 
   * New upstream release.
+  * d/control: Add python-cinderclient to BDs.
 
  -- Corey Bryant <corey.bryant@canonical.com>  Mon, 07 Mar 2016 12:39:30 -0500
 
