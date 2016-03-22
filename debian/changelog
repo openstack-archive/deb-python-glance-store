@@ -1,10 +1,14 @@
 python-glance-store (0.13.0-1) experimental; urgency=medium
 
+  [ Corey Bryant ]
   * New upstream release.
   * d/control: Add python-cinderclient and python-oslosphinx to BDs.
   * d/p/drop-sphinx-git.patch, d/control: Drop use of git from sphinx config.
 
- -- Corey Bryant <corey.bryant@canonical.com>  Mon, 07 Mar 2016 12:39:30 -0500
+  [ Thomas Goirand ]
+  * Added Corey Bryant <corey.bryant@canonical.com> as Uploaders.
+
+ -- Thomas Goirand <zigo@debian.org>  Tue, 22 Mar 2016 12:19:02 +0000
 
 python-glance-store (0.12.0-1) experimental; urgency=medium
 
