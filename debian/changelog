@@ -1,3 +1,9 @@
+python-glance-store (0.13.0-4) UNRELEASED; urgency=medium
+
+  * Standards-Version is 3.9.8 now (no change)
+
+ -- Ondřej Nový <novy@ondrej.org>  Sat, 09 Apr 2016 19:27:02 +0200
+
 python-glance-store (0.13.0-3) unstable; urgency=medium
 
   * Added Mock_swiftclient_s_functions_in_tests.patch to allow swiftclient
