@@ -3,6 +3,7 @@ python-glance-store (0.13.0-4) UNRELEASED; urgency=medium
   * Standards-Version is 3.9.8 now (no change)
   * Fixed package description typo (Closes: #820616)
   * d/rules: Changed UPSTREAM_GIT protocol to https
+  * d/copyright: Changed source URL to https protocol
 
  -- Ondřej Nový <novy@ondrej.org>  Sat, 09 Apr 2016 19:27:02 +0200
 
