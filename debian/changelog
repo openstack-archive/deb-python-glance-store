@@ -1,5 +1,6 @@
-python-glance-store (0.13.1-1) UNRELEASED; urgency=medium
+python-glance-store (0.13.1-1) unstable; urgency=medium
 
+  * Team upload.
   * New upstream release
   * Standards-Version is 3.9.8 now (no change)
   * Fixed package description typo (Closes: #820616)
@@ -8,7 +9,7 @@ python-glance-store (0.13.1-1) UNRELEASED; urgency=medium
   * Removed Mock_swiftclient_s_functions_in_tests.patch
     (Applied upstream)
 
- -- Ondřej Nový <novy@ondrej.org>  Sat, 09 Apr 2016 19:27:02 +0200
+ -- Ondřej Nový <novy@ondrej.org>  Thu, 19 May 2016 21:57:40 +0200
 
 python-glance-store (0.13.0-3) unstable; urgency=medium
 
