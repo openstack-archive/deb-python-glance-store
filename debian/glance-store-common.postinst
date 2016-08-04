@@ -1,0 +1,18 @@
+#!/bin/sh
+
+set -e
+
+if [ "$1" = "configure" ]
+then
+    chown root:root /etc/glance/rootwrap.conf
+    chown -R root:root /etc/glance/rootwrap.d
+    chmod 0755 /etc/glance/rootwrap.d
+
+    if [ -f /etc/sudoers.d/glance_sudoers ] ; then
+        chmod 0440 /etc/sudoers.d/glance_sudoers
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0

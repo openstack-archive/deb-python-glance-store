@@ -76,6 +76,17 @@ Vcs-Browser: https://anonscm.debian.org/gitweb/?p=openstack/python-glance-store.
 Vcs-Git: https://anonscm.debian.org/git/openstack/python-glance-store.git
 Homepage: https://github.com/openstack/glance_store
 
+Package: glance-store-common
+Architecture: all
+Depends: ${misc:Depends}
+Description: OpenStack Image Service store library - common files
+ The Glance project provides services for discovering, registering, and
+ retrieving virtual machine images over the cloud. They may be stand-alone
+ services, or may be used to deliver images from object stores, such as
+ OpenStack's Swift service, to Nova's compute nodes.
+ .
+ This package contains shared configuration files for the Glance's stores.
+
 Package: python-glance-store
 Architecture: all
 Depends: python-debtcollector,
@@ -91,6 +102,7 @@ Depends: python-debtcollector,
          python-requests (>= 2.8.1),
          python-six (>= 1.9.0),
          python-stevedore (>= 1.5.0),
+         glance-store-common (= ${binary:Version}),
          ${misc:Depends},
          ${python:Depends},
 Description: OpenStack Image Service store library - Python 2.7
@@ -115,6 +127,7 @@ Depends: python3-debtcollector,
          python3-requests (>= 2.8.1),
          python3-six (>= 1.9.0),
          python3-stevedore (>= 1.5.0),
+         glance-store-common (= ${binary:Version}),
          ${misc:Depends},
          ${python3:Depends},
 Description: OpenStack Image Service store library - Python 3.x

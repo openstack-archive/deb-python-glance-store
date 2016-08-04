@@ -1,3 +1,11 @@
+python-glance-store (0.13.1-2) UNRELEASED; urgency=medium
+
+  * d/glance-store-common.*,control,glance_sudoers: Add binary package for
+    shared rootwrap configuration, associated filters and sudoers.d
+    configuration (LP: #1609733).
+
+ -- James Page <james.page@ubuntu.com>  Thu, 04 Aug 2016 13:52:10 +0100
+
 python-glance-store (0.13.1-1) unstable; urgency=medium
 
   * Team upload.
