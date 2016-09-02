@@ -40,7 +40,6 @@ FAKE_UUID = str(uuid.uuid4())
 FIVE_KB = 5 * units.Ki
 
 VMWARE_DS = {
-    'verbose': True,
     'debug': True,
     'known_stores': ['vmware_datastore'],
     'default_store': 'vsphere',
@@ -115,7 +114,7 @@ class TestStore(base.StoreBaseTest,
         with mock.patch('requests.Session.request') as HttpConn:
             HttpConn.return_value = utils.fake_response()
             (image_file, image_size) = self.store.get(loc)
-        self.assertEqual(image_size, expected_image_size)
+        self.assertEqual(expected_image_size, image_size)
         chunks = [c for c in image_file]
         self.assertEqual(expected_returns, chunks)
 
@@ -132,10 +131,12 @@ class TestStore(base.StoreBaseTest,
             HttpConn.return_value = utils.fake_response(status_code=404)
             self.assertRaises(exceptions.NotFound, self.store.get, loc)
 
+    @mock.patch.object(vm_store.Store, '_build_vim_cookie_header')
     @mock.patch.object(vm_store.Store, 'select_datastore')
     @mock.patch.object(vm_store._Reader, 'size')
     @mock.patch.object(api, 'VMwareAPISession')
-    def test_add(self, fake_api_session, fake_size, fake_select_datastore):
+    def test_add(self, fake_api_session, fake_size, fake_select_datastore,
+                 fake_cookie):
         """Test that we can add an image via the VMware backend."""
         fake_select_datastore.return_value = self.store.datastores[0][0]
         expected_image_id = str(uuid.uuid4())
@@ -144,6 +145,10 @@ class TestStore(base.StoreBaseTest,
         hash_code = hashlib.md5(expected_contents)
         expected_checksum = hash_code.hexdigest()
         fake_size.__get__ = mock.Mock(return_value=expected_size)
+        expected_cookie = 'vmware_soap_session=fake-uuid'
+        fake_cookie.return_value = expected_cookie
+        expected_headers = {'Content-Length': six.text_type(expected_size),
+                            'Cookie': expected_cookie}
         with mock.patch('hashlib.md5') as md5:
             md5.return_value = hash_code
             expected_location = format_location(
@@ -157,6 +162,8 @@ class TestStore(base.StoreBaseTest,
                 location, size, checksum, _ = self.store.add(expected_image_id,
                                                              image,
                                                              expected_size)
+                _, kwargs = HttpConn.call_args
+                self.assertEqual(expected_headers, kwargs['headers'])
         self.assertEqual(utils.sort_url_by_qs_keys(expected_location),
                          utils.sort_url_by_qs_keys(location))
         self.assertEqual(expected_size, size)
@@ -595,7 +602,7 @@ class TestStore(base.StoreBaseTest,
         with mock.patch('requests.Session.request') as HttpConn:
             HttpConn.side_effect = getresponse
             (image_file, image_size) = self.store.get(loc)
-        self.assertEqual(image_size, expected_image_size)
+        self.assertEqual(expected_image_size, image_size)
         chunks = [c for c in image_file]
         self.assertEqual(expected_returns, chunks)
 

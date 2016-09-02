@@ -153,6 +153,11 @@ class TestCinderStore(base.StoreBaseTest,
                 if error:
                     raise error
 
+        def fake_factory(protocol, root_helper, **kwargs):
+            self.assertEqual(fake_volume.initialize_connection.return_value,
+                             kwargs['conn'])
+            return fake_connector
+
         with mock.patch.object(cinder.Store,
                                '_wait_volume_status',
                                return_value=fake_volume), \
@@ -161,7 +166,7 @@ class TestCinderStore(base.StoreBaseTest,
                 mock.patch.object(cinder, 'get_root_helper'), \
                 mock.patch.object(connector, 'get_connector_properties'), \
                 mock.patch.object(connector.InitiatorConnector, 'factory',
-                                  return_value=fake_connector):
+                                  side_effect=fake_factory):
 
             if error:
                 self.assertRaises(error, do_open)
@@ -208,7 +213,7 @@ class TestCinderStore(base.StoreBaseTest,
 
         @contextlib.contextmanager
         def fake_open(client, volume, mode):
-            self.assertEqual(mode, 'rb')
+            self.assertEqual('rb', mode)
             yield volume_file
 
         with mock.patch.object(cinder, 'get_cinderclient') as mock_cc, \
@@ -234,7 +239,7 @@ class TestCinderStore(base.StoreBaseTest,
     def test_cinder_get_size(self):
         fake_client = FakeObject(auth_token=None, management_url=None)
         fake_volume_uuid = str(uuid.uuid4())
-        fake_volume = FakeObject(size=5)
+        fake_volume = FakeObject(size=5, metadata={})
         fake_volumes = {fake_volume_uuid: fake_volume}
 
         with mock.patch.object(cinder, 'get_cinderclient') as mocked_cc:
@@ -244,7 +249,24 @@ class TestCinderStore(base.StoreBaseTest,
             uri = 'cinder://%s' % fake_volume_uuid
             loc = location.get_location_from_uri(uri, conf=self.conf)
             image_size = self.store.get_size(loc, context=self.context)
-            self.assertEqual(image_size, fake_volume.size * units.Gi)
+            self.assertEqual(fake_volume.size * units.Gi, image_size)
+
+    def test_cinder_get_size_with_metadata(self):
+        fake_client = FakeObject(auth_token=None, management_url=None)
+        fake_volume_uuid = str(uuid.uuid4())
+        expected_image_size = 4500 * units.Mi
+        fake_volume = FakeObject(size=5,
+                                 metadata={'image_size': expected_image_size})
+        fake_volumes = {fake_volume_uuid: fake_volume}
+
+        with mock.patch.object(cinder, 'get_cinderclient') as mocked_cc:
+            mocked_cc.return_value = FakeObject(client=fake_client,
+                                                volumes=fake_volumes)
+
+            uri = 'cinder://%s' % fake_volume_uuid
+            loc = location.get_location_from_uri(uri, conf=self.conf)
+            image_size = self.store.get_size(loc, context=self.context)
+            self.assertEqual(expected_image_size, image_size)
 
     def _test_cinder_add(self, fake_volume, volume_file, size_kb=5,
                          verifier=None):
@@ -260,7 +282,7 @@ class TestCinderStore(base.StoreBaseTest,
 
         @contextlib.contextmanager
         def fake_open(client, volume, mode):
-            self.assertEqual(mode, 'wb')
+            self.assertEqual('wb', mode)
             yield volume_file
 
         with mock.patch.object(cinder, 'get_cinderclient') as mock_cc, \

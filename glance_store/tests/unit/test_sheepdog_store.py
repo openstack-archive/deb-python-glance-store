@@ -104,6 +104,18 @@ class TestSheepdogStore(base.StoreBaseTest,
         mock_create.assert_called_once_with(2)
         mock_write.assert_called_once_with(b'xx', 0, 2)
 
+    @mock.patch.object(sheepdog.SheepdogImage, 'write')
+    @mock.patch.object(sheepdog.SheepdogImage, 'exist')
+    def test_add_bad_size_with_image(self, mock_exist, mock_write):
+        data = six.BytesIO(b'xx')
+        mock_exist.return_value = False
+
+        self.assertRaises(exceptions.Forbidden, self.store.add,
+                          'fake_image_id', data, 'test')
+
+        mock_exist.assert_called_once_with()
+        self.assertEqual(mock_write.call_count, 0)
+
     @mock.patch.object(sheepdog.SheepdogImage, 'delete')
     @mock.patch.object(sheepdog.SheepdogImage, 'write')
     @mock.patch.object(sheepdog.SheepdogImage, 'create')
@@ -144,7 +156,7 @@ class TestSheepdogStore(base.StoreBaseTest,
                                     sheepdog.StoreLocation,
                                     self.conf, store_specs=self.store_specs)
             ret = self.store.get(loc)
-            self.assertEqual(ret[1], 1000)
+            self.assertEqual(1000, ret[1])
 
     def test_partial_get(self):
         loc = location.Location('test_sheepdog_store', sheepdog.StoreLocation,
@@ -163,7 +175,7 @@ class TestSheepdogStore(base.StoreBaseTest,
                                     sheepdog.StoreLocation,
                                     self.conf, store_specs=self.store_specs)
             ret = self.store.get_size(loc)
-            self.assertEqual(ret, 1000)
+            self.assertEqual(1000, ret)
 
     def test_delete(self):
         called_commands = []
@@ -179,7 +191,7 @@ class TestSheepdogStore(base.StoreBaseTest,
                                     sheepdog.StoreLocation,
                                     self.conf, store_specs=self.store_specs)
             self.store.delete(loc)
-            self.assertEqual(called_commands, ['list -r', 'delete'])
+            self.assertEqual(['list -r', 'delete'], called_commands)
 
     def test_add_with_verifier(self):
         """Test that 'verifier.update' is called when verifier is provided."""

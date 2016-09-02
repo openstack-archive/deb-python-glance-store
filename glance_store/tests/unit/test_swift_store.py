@@ -141,7 +141,7 @@ def stub_out_swiftclient(stubs, swift_store_auth_version, conf=None):
             raise swiftclient.ClientException(msg,
                                               http_status=http_client.CONFLICT)
 
-    def fake_get_object(url, token, container, name='noexist', **kwargs):
+    def fake_get_object(conn, container, name, **kwargs):
         # GET returns the tuple (list of headers, file object)
         fixture_key = "%s/%s" % (container, name)
         if fixture_key not in fixture_headers:
@@ -237,7 +237,7 @@ def stub_out_swiftclient(stubs, swift_store_auth_version, conf=None):
               'delete_object', fake_delete_object)
     stubs.Set(swiftclient.client,
               'head_object', fake_head_object)
-    stubs.Set(swiftclient.client,
+    stubs.Set(swiftclient.client.Connection,
               'get_object', fake_get_object)
     stubs.Set(swiftclient.client,
               'get_auth', fake_get_auth)
@@ -267,7 +267,7 @@ class SwiftTests(object):
             self.swift_store_user, FAKE_UUID)
         loc = location.get_location_from_uri(uri, conf=self.conf)
         image_size = self.store.get_size(loc)
-        self.assertEqual(image_size, 5120)
+        self.assertEqual(5120, image_size)
 
     def test_get_size_with_multi_tenant_on(self):
         """Test that single tenant uris work with multi tenant on."""
@@ -277,7 +277,7 @@ class SwiftTests(object):
         # NOTE(markwash): ensure the image is found
         ctxt = mock.MagicMock()
         size = backend.get_size_from_backend(uri, context=ctxt)
-        self.assertEqual(size, 5120)
+        self.assertEqual(5120, size)
 
     def test_get(self):
         """Test a "normal" retrieval of an image in chunks."""
@@ -285,7 +285,7 @@ class SwiftTests(object):
             self.swift_store_user, FAKE_UUID)
         loc = location.get_location_from_uri(uri, conf=self.conf)
         (image_swift, image_size) = self.store.get(loc)
-        self.assertEqual(image_size, 5120)
+        self.assertEqual(5120, image_size)
 
         expected_data = b"*" * FIVE_KB
         data = b""
@@ -314,7 +314,7 @@ class SwiftTests(object):
                                                      self.store,
                                                      loc.store_location,
                                                      manager)
-        self.assertEqual(image_size, 5120)
+        self.assertEqual(5120, image_size)
 
         expected_data = b"*" * FIVE_KB
         data = b""
@@ -335,7 +335,7 @@ class SwiftTests(object):
 
         ctxt = mock.MagicMock()
         (image_swift, image_size) = self.store.get(loc, context=ctxt)
-        self.assertEqual(image_size, 5120)
+        self.assertEqual(5120, image_size)
 
         expected_data = b"*" * FIVE_KB
         data = b""
@@ -384,7 +384,7 @@ class SwiftTests(object):
         self.assertEqual(expected_swift_size, size)
         self.assertEqual(expected_checksum, checksum)
         # Expecting a single object to be created on Swift i.e. no chunking.
-        self.assertEqual(SWIFT_PUT_OBJECT_CALLS, 1)
+        self.assertEqual(1, SWIFT_PUT_OBJECT_CALLS)
 
         loc = location.get_location_from_uri(expected_location, conf=self.conf)
         (new_image_swift, new_image_size) = self.store.get(loc)
@@ -460,7 +460,7 @@ class SwiftTests(object):
             self.assertEqual(expected_location, loc)
             self.assertEqual(expected_swift_size, size)
             self.assertEqual(expected_checksum, checksum)
-            self.assertEqual(SWIFT_PUT_OBJECT_CALLS, 1)
+            self.assertEqual(1, SWIFT_PUT_OBJECT_CALLS)
 
             loc = location.get_location_from_uri(expected_location,
                                                  conf=self.conf)
@@ -503,7 +503,7 @@ class SwiftTests(object):
             self.assertIn("container noexist does not exist in Swift",
                           encodeutils.exception_to_unicode(e))
         self.assertTrue(exception_caught)
-        self.assertEqual(SWIFT_PUT_OBJECT_CALLS, 0)
+        self.assertEqual(0, SWIFT_PUT_OBJECT_CALLS)
 
     @mock.patch('glance_store._drivers.swift.utils'
                 '.is_multiple_swift_store_accounts_enabled',
@@ -539,7 +539,7 @@ class SwiftTests(object):
         self.assertEqual(expected_location, loc)
         self.assertEqual(expected_swift_size, size)
         self.assertEqual(expected_checksum, checksum)
-        self.assertEqual(SWIFT_PUT_OBJECT_CALLS, 1)
+        self.assertEqual(1, SWIFT_PUT_OBJECT_CALLS)
 
         loc = location.get_location_from_uri(expected_location, conf=self.conf)
         (new_image_swift, new_image_size) = self.store.get(loc)
@@ -586,7 +586,7 @@ class SwiftTests(object):
         self.assertEqual(expected_location, loc)
         self.assertEqual(expected_swift_size, size)
         self.assertEqual(expected_checksum, checksum)
-        self.assertEqual(SWIFT_PUT_OBJECT_CALLS, 1)
+        self.assertEqual(1, SWIFT_PUT_OBJECT_CALLS)
 
         loc = location.get_location_from_uri(expected_location, conf=self.conf)
         (new_image_swift, new_image_size) = self.store.get(loc)
@@ -636,7 +636,7 @@ class SwiftTests(object):
             expected_msg = expected_msg % expected_container
             self.assertIn(expected_msg, encodeutils.exception_to_unicode(e))
         self.assertTrue(exception_caught)
-        self.assertEqual(SWIFT_PUT_OBJECT_CALLS, 0)
+        self.assertEqual(0, SWIFT_PUT_OBJECT_CALLS)
 
     @mock.patch('glance_store._drivers.swift.utils'
                 '.is_multiple_swift_store_accounts_enabled',
@@ -666,8 +666,8 @@ class SwiftTests(object):
             self.store.large_object_size = orig_max_size
 
         # Confirm verifier update called expected number of times
-        self.assertEqual(verifier.update.call_count,
-                         2 * swift_size / custom_size)
+        self.assertEqual(2 * swift_size / custom_size,
+                         verifier.update.call_count)
 
         # define one chunk of the contents
         swift_contents_piece = base_byte * (custom_size // 8)
@@ -713,7 +713,7 @@ class SwiftTests(object):
             self.store.large_object_size = orig_max_size
 
         # Confirm verifier update called expected number of times
-        self.assertEqual(verifier.update.call_count, 2)
+        self.assertEqual(2, verifier.update.call_count)
 
         # define one chunk of the contents
         swift_contents_piece = base_byte * (swift_size // 8)
@@ -806,7 +806,7 @@ class SwiftTests(object):
         self.assertEqual(expected_checksum, checksum)
         # Expecting 6 objects to be created on Swift -- 5 chunks and 1
         # manifest.
-        self.assertEqual(SWIFT_PUT_OBJECT_CALLS, 6)
+        self.assertEqual(6, SWIFT_PUT_OBJECT_CALLS)
 
         loc = location.get_location_from_uri(expected_location, conf=self.conf)
         (new_image_swift, new_image_size) = self.store.get(loc)
@@ -863,7 +863,7 @@ class SwiftTests(object):
         self.assertEqual(expected_swift_size, size)
         self.assertEqual(expected_checksum, checksum)
         # Expecting 6 calls to put_object -- 5 chunks, and the manifest.
-        self.assertEqual(SWIFT_PUT_OBJECT_CALLS, 6)
+        self.assertEqual(6, SWIFT_PUT_OBJECT_CALLS)
 
         loc = location.get_location_from_uri(expected_location, conf=self.conf)
         (new_image_swift, new_image_size) = self.store.get(loc)
@@ -1063,7 +1063,7 @@ class SwiftTests(object):
 
         self.store.delete(loc, connection=conn)
         # Expecting 6 delete calls, 5 for the segments and 1 for the manifest
-        self.assertEqual(SWIFT_DELETE_OBJECT_CALLS, 6)
+        self.assertEqual(6, SWIFT_DELETE_OBJECT_CALLS)
 
     def test_read_acl_public(self):
         """
@@ -1078,8 +1078,7 @@ class SwiftTests(object):
         store.set_acls(loc, public=True, context=ctxt)
         container_headers = swiftclient.client.head_container('x', 'y',
                                                               'glance')
-        self.assertEqual(container_headers['X-Container-Read'],
-                         "*:*")
+        self.assertEqual("*:*", container_headers['X-Container-Read'])
 
     def test_read_acl_tenants(self):
         """
@@ -1095,8 +1094,8 @@ class SwiftTests(object):
         store.set_acls(loc, read_tenants=read_tenants, context=ctxt)
         container_headers = swiftclient.client.head_container('x', 'y',
                                                               'glance')
-        self.assertEqual(container_headers['X-Container-Read'],
-                         'matt:*,mark:*')
+        self.assertEqual('matt:*,mark:*', container_headers[
+            'X-Container-Read'])
 
     def test_write_acls(self):
         """
@@ -1112,8 +1111,8 @@ class SwiftTests(object):
         store.set_acls(loc, write_tenants=read_tenants, context=ctxt)
         container_headers = swiftclient.client.head_container('x', 'y',
                                                               'glance')
-        self.assertEqual(container_headers['X-Container-Write'],
-                         'frank:*,jim:*')
+        self.assertEqual('frank:*,jim:*', container_headers[
+            'X-Container-Write'])
 
     @mock.patch("glance_store._drivers.swift."
                 "connection_manager.MultiTenantConnectionManager")
@@ -1308,8 +1307,8 @@ class TestStoreAuthV3(TestStoreAuthV1):
             auth_url=loc.store_location.swift_url + '/',
             username=username, password="key",
             project_name=tenant,
-            project_domain_id=None, project_domain_name=None,
-            user_domain_id=None, user_domain_name=None,)
+            project_domain_id='default', project_domain_name=None,
+            user_domain_id='default', user_domain_name=None,)
         mock_session.Session.assert_called_once_with(auth=mock_v3.Password())
         mock_client.Client.assert_called_once_with(
             session=mock_session.Session())
@@ -1357,52 +1356,52 @@ class TestSingleTenantStoreConnections(base.StoreBaseTest):
 
     def test_basic_connection(self):
         connection = self.store.get_connection(self.location)
-        self.assertEqual(connection.authurl, 'https://example.com/v2/')
-        self.assertEqual(connection.auth_version, '2')
-        self.assertEqual(connection.user, 'user1')
-        self.assertEqual(connection.tenant_name, 'tenant')
-        self.assertEqual(connection.key, 'key1')
+        self.assertEqual('https://example.com/v2/', connection.authurl)
+        self.assertEqual('2', connection.auth_version)
+        self.assertEqual('user1', connection.user)
+        self.assertEqual('tenant', connection.tenant_name)
+        self.assertEqual('key1', connection.key)
         self.assertIsNone(connection.preauthurl)
         self.assertFalse(connection.insecure)
-        self.assertEqual(connection.os_options,
-                         {'service_type': 'object-store',
-                          'endpoint_type': 'publicURL'})
+        self.assertEqual({'service_type': 'object-store',
+                          'endpoint_type': 'publicURL'},
+                         connection.os_options)
 
     def test_connection_with_conf_endpoint(self):
         ctx = mock.MagicMock(user='tenant:user1', tenant='tenant')
         self.config(swift_store_endpoint='https://internal.com')
         self.store.configure()
         connection = self.store.get_connection(self.location, context=ctx)
-        self.assertEqual(connection.authurl, 'https://example.com/v2/')
-        self.assertEqual(connection.auth_version, '2')
-        self.assertEqual(connection.user, 'user1')
-        self.assertEqual(connection.tenant_name, 'tenant')
-        self.assertEqual(connection.key, 'key1')
-        self.assertEqual(connection.preauthurl, 'https://internal.com')
+        self.assertEqual('https://example.com/v2/', connection.authurl)
+        self.assertEqual('2', connection.auth_version)
+        self.assertEqual('user1', connection.user)
+        self.assertEqual('tenant', connection.tenant_name)
+        self.assertEqual('key1', connection.key)
+        self.assertEqual('https://internal.com', connection.preauthurl)
         self.assertFalse(connection.insecure)
-        self.assertEqual(connection.os_options,
-                         {'service_type': 'object-store',
-                          'endpoint_type': 'publicURL'})
+        self.assertEqual({'service_type': 'object-store',
+                          'endpoint_type': 'publicURL'},
+                         connection.os_options)
 
     def test_connection_with_conf_endpoint_no_context(self):
         self.config(swift_store_endpoint='https://internal.com')
         self.store.configure()
         connection = self.store.get_connection(self.location)
-        self.assertEqual(connection.authurl, 'https://example.com/v2/')
-        self.assertEqual(connection.auth_version, '2')
-        self.assertEqual(connection.user, 'user1')
-        self.assertEqual(connection.tenant_name, 'tenant')
-        self.assertEqual(connection.key, 'key1')
-        self.assertEqual(connection.preauthurl, 'https://internal.com')
+        self.assertEqual('https://example.com/v2/', connection.authurl)
+        self.assertEqual('2', connection.auth_version)
+        self.assertEqual('user1', connection.user)
+        self.assertEqual('tenant', connection.tenant_name)
+        self.assertEqual('key1', connection.key)
+        self.assertEqual('https://internal.com', connection.preauthurl)
         self.assertFalse(connection.insecure)
-        self.assertEqual(connection.os_options,
-                         {'service_type': 'object-store',
-                          'endpoint_type': 'publicURL'})
+        self.assertEqual({'service_type': 'object-store',
+                          'endpoint_type': 'publicURL'},
+                         connection.os_options)
 
     def test_connection_with_no_trailing_slash(self):
         self.location.auth_or_store_url = 'example.com/v2'
         connection = self.store.get_connection(self.location)
-        self.assertEqual(connection.authurl, 'https://example.com/v2/')
+        self.assertEqual('https://example.com/v2/', connection.authurl)
 
     def test_connection_insecure(self):
         self.config(swift_store_auth_insecure=True)
@@ -1415,8 +1414,8 @@ class TestSingleTenantStoreConnections(base.StoreBaseTest):
         self.store.configure()
         self.location.user = 'auth_v1_user'
         connection = self.store.get_connection(self.location)
-        self.assertEqual(connection.auth_version, '1')
-        self.assertEqual(connection.user, 'auth_v1_user')
+        self.assertEqual('1', connection.auth_version)
+        self.assertEqual('auth_v1_user', connection.user)
         self.assertIsNone(connection.tenant_name)
 
     def test_connection_invalid_user(self):
@@ -1435,26 +1434,26 @@ class TestSingleTenantStoreConnections(base.StoreBaseTest):
         self.config(swift_store_region='Sahara')
         self.store.configure()
         connection = self.store.get_connection(self.location)
-        self.assertEqual(connection.os_options,
-                         {'region_name': 'Sahara',
+        self.assertEqual({'region_name': 'Sahara',
                           'service_type': 'object-store',
-                          'endpoint_type': 'publicURL'})
+                          'endpoint_type': 'publicURL'},
+                         connection.os_options)
 
     def test_connection_with_service_type(self):
         self.config(swift_store_service_type='shoe-store')
         self.store.configure()
         connection = self.store.get_connection(self.location)
-        self.assertEqual(connection.os_options,
-                         {'service_type': 'shoe-store',
-                          'endpoint_type': 'publicURL'})
+        self.assertEqual({'service_type': 'shoe-store',
+                          'endpoint_type': 'publicURL'},
+                         connection.os_options)
 
     def test_connection_with_endpoint_type(self):
         self.config(swift_store_endpoint_type='internalURL')
         self.store.configure()
         connection = self.store.get_connection(self.location)
-        self.assertEqual(connection.os_options,
-                         {'service_type': 'object-store',
-                          'endpoint_type': 'internalURL'})
+        self.assertEqual({'service_type': 'object-store',
+                          'endpoint_type': 'internalURL'},
+                         connection.os_options)
 
     def test_bad_location_uri(self):
         self.store.configure()
@@ -1515,13 +1514,13 @@ class TestSingleTenantStoreConnections(base.StoreBaseTest):
         self.store.configure()
         connection = self.store.get_connection(self.location)
         self.assertEqual('3', connection.auth_version)
-        self.assertEqual(connection.os_options,
-                         {'service_type': 'object-store',
+        self.assertEqual({'service_type': 'object-store',
                           'endpoint_type': 'publicURL',
                           'user_domain_id': 'default',
                           'user_domain_name': 'ignored',
                           'project_domain_id': 'default',
-                          'project_domain_name': 'ignored'})
+                          'project_domain_name': 'ignored'},
+                         connection.os_options)
 
 
 class TestMultiTenantStoreConnections(base.StoreBaseTest):
@@ -1545,13 +1544,13 @@ class TestMultiTenantStoreConnections(base.StoreBaseTest):
         connection = self.store.get_connection(self.location,
                                                context=self.context)
         self.assertIsNone(connection.authurl)
-        self.assertEqual(connection.auth_version, '1')
+        self.assertEqual('1', connection.auth_version)
         self.assertIsNone(connection.user)
         self.assertIsNone(connection.tenant_name)
         self.assertIsNone(connection.key)
-        self.assertEqual(connection.preauthurl, 'https://example.com')
-        self.assertEqual(connection.preauthtoken, '0123')
-        self.assertEqual(connection.os_options, {})
+        self.assertEqual('https://example.com', connection.preauthurl)
+        self.assertEqual('0123', connection.preauthtoken)
+        self.assertEqual({}, connection.os_options)
 
     def test_connection_with_endpoint_from_catalog(self):
         self.store.configure()
@@ -1571,13 +1570,13 @@ class TestMultiTenantStoreConnections(base.StoreBaseTest):
         connection = self.store.get_connection(self.location,
                                                context=self.context)
         self.assertIsNone(connection.authurl)
-        self.assertEqual(connection.auth_version, '1')
+        self.assertEqual('1', connection.auth_version)
         self.assertIsNone(connection.user)
         self.assertIsNone(connection.tenant_name)
         self.assertIsNone(connection.key)
-        self.assertEqual(connection.preauthurl, 'https://scexample.com')
-        self.assertEqual(connection.preauthtoken, '0123')
-        self.assertEqual(connection.os_options, {})
+        self.assertEqual('https://scexample.com', connection.preauthurl)
+        self.assertEqual('0123', connection.preauthtoken)
+        self.assertEqual({}, connection.os_options)
 
     def test_connection_with_no_endpoint_found(self):
         self.store.configure()
@@ -1598,13 +1597,13 @@ class TestMultiTenantStoreConnections(base.StoreBaseTest):
         connection = self.store.get_connection(self.location,
                                                context=self.context)
         self.assertIsNone(connection.authurl)
-        self.assertEqual(connection.auth_version, '1')
+        self.assertEqual('1', connection.auth_version)
         self.assertIsNone(connection.user)
         self.assertIsNone(connection.tenant_name)
         self.assertIsNone(connection.key)
-        self.assertEqual(connection.preauthurl, 'https://example.com')
-        self.assertEqual(connection.preauthtoken, '0123')
-        self.assertEqual(connection.os_options, {})
+        self.assertEqual('https://example.com', connection.preauthurl)
+        self.assertEqual('0123', connection.preauthtoken)
+        self.assertEqual({}, connection.os_options)
 
 
 def fake_getresponse(self):
@@ -1669,8 +1668,8 @@ class TestMultiTenantStoreContext(base.StoreBaseTest):
         store.configure()
         uri = "swift+http://127.0.0.1/glance_123/123"
         loc = location.get_location_from_uri(uri, conf=self.conf)
-        m.get("http://127.0.0.1/glance_123/123")
-
+        m.get("http://127.0.0.1/glance_123/123",
+              headers={'Content-Length': '0'})
         store.get(loc, context=self.ctx)
         self.assertEqual(b'0123', m.last_request.headers['X-Auth-Token'])
 
@@ -1740,12 +1739,12 @@ class TestCreatingLocations(base.StoreBaseTest):
         store = swift.SingleTenantStore(self.conf)
         store.configure()
         location = store.create_location('image-id')
-        self.assertEqual(location.scheme, 'swift+https')
-        self.assertEqual(location.swift_url, 'https://example.com')
-        self.assertEqual(location.container, 'container')
-        self.assertEqual(location.obj, 'image-id')
-        self.assertEqual(location.user, 'tenant:user1')
-        self.assertEqual(location.key, 'key1')
+        self.assertEqual('swift+https', location.scheme)
+        self.assertEqual('https://example.com', location.swift_url)
+        self.assertEqual('container', location.container)
+        self.assertEqual('image-id', location.obj)
+        self.assertEqual('tenant:user1', location.user)
+        self.assertEqual('key1', location.key)
 
     def test_single_tenant_location_http(self):
         conf_file = "glance-swift.conf"
@@ -1758,18 +1757,18 @@ class TestCreatingLocations(base.StoreBaseTest):
         store = swift.SingleTenantStore(self.conf)
         store.configure()
         location = store.create_location('image-id')
-        self.assertEqual(location.scheme, 'swift+http')
-        self.assertEqual(location.swift_url, 'http://example.com')
+        self.assertEqual('swift+http', location.scheme)
+        self.assertEqual('http://example.com', location.swift_url)
 
     def test_multi_tenant_location(self):
         self.config(swift_store_container='container')
         store = swift.MultiTenantStore(self.conf)
         store.configure()
         location = store.create_location('image-id', context=self.ctxt)
-        self.assertEqual(location.scheme, 'swift+https')
-        self.assertEqual(location.swift_url, 'https://some_endpoint')
-        self.assertEqual(location.container, 'container_image-id')
-        self.assertEqual(location.obj, 'image-id')
+        self.assertEqual('swift+https', location.scheme)
+        self.assertEqual('https://some_endpoint', location.swift_url)
+        self.assertEqual('container_image-id', location.container)
+        self.assertEqual('image-id', location.obj)
         self.assertIsNone(location.user)
         self.assertIsNone(location.key)
 

@@ -14,14 +14,18 @@
 
 # This script is executed inside gate_hook function in devstack gate.
 
-GLANCE_STORE_DRIVER=$1
+# NOTE(NiallBunting) The store to test is passed in here from the
+# project config.
+GLANCE_STORE_DRIVER=${1:-swift}
 
-ENABLED_SERVICES="mysql,key,glance,"
+ENABLED_SERVICES+=",key,glance"
 
-export DEVSTACK_LOCAL_CONFIG
-export DEVSTACK_GATE_INSTALL_TESTONLY=1
-export DEVSTACK_GATE_NO_SERVICES=1
-export KEEP_LOCALRC=1
+case $GLANCE_STORE_DRIVER in
+    swift)
+        ENABLED_SERVICES+=",s-proxy,s-account,s-container,s-object,"
+        ;;
+esac
+
 export GLANCE_STORE_DRIVER
 
 export ENABLED_SERVICES

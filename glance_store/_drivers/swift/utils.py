@@ -20,39 +20,86 @@ from oslo_config import cfg
 from six.moves import configparser
 
 from glance_store import exceptions
-from glance_store import i18n
+from glance_store.i18n import _, _LE
 
 swift_opts = [
     cfg.StrOpt('default_swift_reference',
                default="ref1",
-               help=i18n._('The reference to the default swift account/backing'
-                           ' store parameters to use for adding new images.')),
+               help=_("""
+Reference to default Swift account/backing store parameters.
+
+Provide a string value representing a reference to the default set
+of parameters required for using swift account/backing store for
+image storage. The default reference value for this configuration
+option is 'ref1'. This configuration option dereferences the
+parameters and facilitates image storage in Swift storage backend
+every time a new image is added.
+
+Possible values:
+    * A valid string value
+
+Related options:
+    * None
+
+""")),
     cfg.StrOpt('swift_store_auth_version', default='2',
-               help=i18n._('Version of the authentication service to use. '
-                           'Valid versions are 2 and 3 for keystone and 1 '
-                           '(deprecated) for swauth and rackspace. '
-                           '(deprecated - use "auth_version" in '
-                           'swift_store_config_file)')),
+               help=_('Version of the authentication service to use. '
+                      'Valid versions are 2 and 3 for keystone and 1 '
+                      '(deprecated) for swauth and rackspace.'),
+               deprecated_for_removal=True,
+               deprecated_reason=_("""
+The option 'auth_version' in the Swift back-end configuration file is
+used instead.
+""")),
     cfg.StrOpt('swift_store_auth_address',
-               help=i18n._('The address where the Swift authentication '
-                           'service is listening. (deprecated - use '
-                           '"auth_address" in swift_store_config_file)')),
+               help=_('The address where the Swift authentication '
+                      'service is listening.'),
+               deprecated_for_removal=True,
+               deprecated_reason=_("""
+The option 'auth_address' in the Swift back-end configuration file is
+used instead.
+""")),
     cfg.StrOpt('swift_store_user', secret=True,
-               help=i18n._('The user to authenticate against the Swift '
-                           'authentication service (deprecated - use "user" '
-                           'in swift_store_config_file)')),
+               help=_('The user to authenticate against the Swift '
+                      'authentication service.'),
+               deprecated_for_removal=True,
+               deprecated_reason=_("""
+The option 'user' in the Swift back-end configuration file is set instead.
+""")),
     cfg.StrOpt('swift_store_key', secret=True,
-               help=i18n._('Auth key for the user authenticating against the '
-                           'Swift authentication service. (deprecated - use '
-                           '"key" in swift_store_config_file)')),
-    cfg.StrOpt('swift_store_config_file', secret=True,
-               help=i18n._('The config file that has the swift account(s)'
-                           'configs.')),
+               help=_('Auth key for the user authenticating against the '
+                      'Swift authentication service.'),
+               deprecated_for_removal=True,
+               deprecated_reason=_("""
+The option 'key' in the Swift back-end configuration file is used
+to set the authentication key instead.
+""")),
+    cfg.StrOpt('swift_store_config_file',
+               default=None,
+               help=_("""
+Absolute path to the file containing the swift account(s)
+configurations.
+
+Include a string value representing the path to a configuration
+file that has references for each of the configured Swift
+account(s)/backing stores. By default, no file path is specified
+and customized Swift referencing is disabled. Configuring this
+option is highly recommended while using Swift storage backend for
+image storage as it avoids storage of credentials in the database.
+
+Possible values:
+    * String value representing an absolute path on the glance-api
+      node
+
+Related options:
+    * None
+
+""")),
 ]
 
-_config_defaults = {'user_domain_id': None,
+_config_defaults = {'user_domain_id': 'default',
                     'user_domain_name': None,
-                    'project_domain_id': None,
+                    'project_domain_id': 'default',
                     'project_domain_name': None}
 
 # NOTE(bourke): The default dict_type is collections.OrderedDict in py27, but
@@ -89,9 +136,9 @@ class SwiftParams(object):
             default['user'] = glance_store.swift_store_user
             default['key'] = glance_store.swift_store_key
             default['auth_address'] = glance_store.swift_store_auth_address
-            default['project_domain_id'] = None
+            default['project_domain_id'] = 'default'
             default['project_domain_name'] = None
-            default['user_domain_id'] = None
+            default['user_domain_id'] = 'default'
             default['user_domain_name'] = None
             default['auth_version'] = glance_store.swift_store_auth_version
             return {glance_store.default_swift_reference: default}
@@ -103,8 +150,8 @@ class SwiftParams(object):
             conf_file = self.conf.find_file(scf)
             CONFIG.read(conf_file)
         except Exception as e:
-            msg = (i18n._("swift config file "
-                          "%(conf)s:%(exc)s not found") %
+            msg = (_("swift config file "
+                     "%(conf)s:%(exc)s not found"),
                    {'conf': self.conf.glance_store.swift_store_config_file,
                     'exc': e})
             LOG.error(msg)
@@ -133,6 +180,5 @@ class SwiftParams(object):
 
                 account_params[ref] = reference
             except (ValueError, SyntaxError, configparser.NoOptionError) as e:
-                LOG.exception(i18n._("Invalid format of swift store config"
-                                     "cfg"))
+                LOG.exception(_LE("Invalid format of swift store config cfg"))
         return account_params

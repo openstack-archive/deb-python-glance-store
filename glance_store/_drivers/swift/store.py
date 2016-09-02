@@ -43,13 +43,11 @@ from glance_store._drivers.swift import utils as sutils
 from glance_store import capabilities
 from glance_store import driver
 from glance_store import exceptions
-from glance_store import i18n
+from glance_store.i18n import _, _LE, _LI
 from glance_store import location
 
 
-_ = i18n._
 LOG = logging.getLogger(__name__)
-_LI = i18n._LI
 
 DEFAULT_CONTAINER = 'glance'
 DEFAULT_LARGE_OBJECT_SIZE = 5 * units.Ki  # 5GB
@@ -58,89 +56,395 @@ ONE_MB = units.k * units.Ki  # Here we used the mixed meaning of MB
 
 _SWIFT_OPTS = [
     cfg.BoolOpt('swift_store_auth_insecure', default=False,
-                help=_('If True, swiftclient won\'t check for a valid SSL '
-                       'certificate when authenticating.')),
+                help=_("""
+Set verification of the server certificate.
+
+This boolean determines whether or not to verify the server
+certificate. If this option is set to True, swiftclient won't check
+for a valid SSL certificate when authenticating. If the option is set
+to False, then the default CA truststore is used for verification.
+
+Possible values:
+    * True
+    * False
+
+Related options:
+    * swift_store_cacert
+
+""")),
     cfg.StrOpt('swift_store_cacert',
-               help=_('A string giving the CA certificate file to use in '
-                      'SSL connections for verifying certs.')),
+               sample_default='/etc/ssl/certs/ca-certificates.crt',
+               help=_("""
+Path to the CA bundle file.
+
+This configuration option enables the operator to specify the path to
+a custom Certificate Authority file for SSL verification when
+connecting to Swift.
+
+Possible values:
+    * A valid path to a CA file
+
+Related options:
+    * swift_store_auth_insecure
+
+""")),
     cfg.StrOpt('swift_store_region',
-               help=_('The region of the swift endpoint to be used for '
-                      'single tenant. This setting is only necessary if the '
-                      'tenant has multiple swift endpoints.')),
+               sample_default='RegionTwo',
+               help=_("""
+The region of Swift endpoint to use by Glance.
+
+Provide a string value representing a Swift region where Glance
+can connect to for image storage. By default, there is no region
+set.
+
+When Glance uses Swift as the storage backend to store images
+for a specific tenant that has multiple endpoints, setting of a
+Swift region with ``swift_store_region`` allows Glance to connect
+to Swift in the specified region as opposed to a single region
+connectivity.
+
+This option can be configured for both single-tenant and
+multi-tenant storage.
+
+NOTE: Setting the region with ``swift_store_region`` is
+tenant-specific and is necessary ``only if`` the tenant has
+multiple endpoints across different regions.
+
+Possible values:
+    * A string value representing a valid Swift region.
+
+Related Options:
+    * None
+
+""")),
     cfg.StrOpt('swift_store_endpoint',
-               help=_('If set, the configured endpoint will be used. If '
-                      'None, the storage url from the auth response will be '
-                      'used.')),
+               sample_default="""\
+https://swift.openstack.example.org/v1/path_not_including_container\
+_name\
+""",
+               help=_("""
+The URL endpoint to use for Swift backend storage.
+
+Provide a string value representing the URL endpoint to use for
+storing Glance images in Swift store. By default, an endpoint
+is not set and the storage URL returned by ``auth`` is used.
+Setting an endpoint with ``swift_store_endpoint`` overrides the
+storage URL and is used for Glance image storage.
+
+NOTE: The URL should include the path up to, but excluding the
+container. The location of an object is obtained by appending
+the container and object to the configured URL.
+
+Possible values:
+    * String value representing a valid URL path up to a Swift container
+
+Related Options:
+    * None
+
+""")),
     cfg.StrOpt('swift_store_endpoint_type', default='publicURL',
-               help=_('A string giving the endpoint type of the swift '
-                      'service to use (publicURL, adminURL or internalURL). '
-                      'This setting is only used if swift_store_auth_version '
-                      'is 2.')),
-    cfg.StrOpt('swift_store_service_type', default='object-store',
-               help=_('A string giving the service type of the swift service '
-                      'to use. This setting is only used if '
-                      'swift_store_auth_version is 2.')),
+               choices=('publicURL', 'adminURL', 'internalURL'),
+               help=_("""
+Endpoint Type of Swift service.
+
+This string value indicates the endpoint type to use to fetch the
+Swift endpoint. The endpoint type determines the actions the user will
+be allowed to perform, for instance, reading and writing to the Store.
+This setting is only used if swift_store_auth_version is greater than
+1.
+
+Possible values:
+    * publicURL
+    * adminURL
+    * internalURL
+
+Related options:
+    * swift_store_endpoint
+
+""")),
+    cfg.StrOpt('swift_store_service_type',
+               default='object-store',
+               help=_("""
+Type of Swift service to use.
+
+Provide a string value representing the service type to use for
+storing images while using Swift backend storage. The default
+service type is set to ``object-store``.
+
+NOTE: If ``swift_store_auth_version`` is set to 2, the value for
+this configuration option needs to be ``object-store``. If using
+a higher version of Keystone or a different auth scheme, this
+option may be modified.
+
+Possible values:
+    * A string representing a valid service type for Swift storage.
+
+Related Options:
+    * None
+
+""")),
     cfg.StrOpt('swift_store_container',
                default=DEFAULT_CONTAINER,
-               help=_('Container within the account that the account should '
-                      'use for storing images in Swift when using single '
-                      'container mode. In multiple container mode, this will '
-                      'be the prefix for all containers.')),
+               help=_("""
+Name of single container to store images/name prefix for multiple containers
+
+When a single container is being used to store images, this configuration
+option indicates the container within the Glance account to be used for
+storing all images. When multiple containers are used to store images, this
+will be the name prefix for all containers. Usage of single/multiple
+containers can be controlled using the configuration option
+``swift_store_multiple_containers_seed``.
+
+When using multiple containers, the containers will be named after the value
+set for this configuration option with the first N chars of the image UUID
+as the suffix delimited by an underscore (where N is specified by
+``swift_store_multiple_containers_seed``).
+
+Example: if the seed is set to 3 and swift_store_container = ``glance``, then
+an image with UUID ``fdae39a1-bac5-4238-aba4-69bcc726e848`` would be placed in
+the container ``glance_fda``. All dashes in the UUID are included when
+creating the container name but do not count toward the character limit, so
+when N=10 the container name would be ``glance_fdae39a1-ba.``
+
+Possible values:
+    * If using single container, this configuration option can be any string
+      that is a valid swift container name in Glance's Swift account
+    * If using multiple containers, this configuration option can be any
+      string as long as it satisfies the container naming rules enforced by
+      Swift. The value of ``swift_store_multiple_containers_seed`` should be
+      taken into account as well.
+
+Related options:
+    * ``swift_store_multiple_containers_seed``
+    * ``swift_store_multi_tenant``
+    * ``swift_store_create_container_on_put``
+
+""")),
     cfg.IntOpt('swift_store_large_object_size',
-               default=DEFAULT_LARGE_OBJECT_SIZE,
-               help=_('The size, in MB, that Glance will start chunking image '
-                      'files and do a large object manifest in Swift.')),
+               default=DEFAULT_LARGE_OBJECT_SIZE, min=1,
+               help=_("""
+The size threshold, in MB, after which Glance will start segmenting image data.
+
+Swift has an upper limit on the size of a single uploaded object. By default,
+this is 5GB. To upload objects bigger than this limit, objects are segmented
+into multiple smaller objects that are tied together with a manifest file.
+For more detail, refer to
+http://docs.openstack.org/developer/swift/overview_large_objects.html
+
+This configuration option specifies the size threshold over which the Swift
+driver will start segmenting image data into multiple smaller files.
+Currently, the Swift driver only supports creating Dynamic Large Objects.
+
+NOTE: This should be set by taking into account the large object limit
+enforced by the Swift cluster in consideration.
+
+Possible values:
+    * A positive integer that is less than or equal to the large object limit
+      enforced by the Swift cluster in consideration.
+
+Related options:
+    * ``swift_store_large_object_chunk_size``
+
+""")),
     cfg.IntOpt('swift_store_large_object_chunk_size',
-               default=DEFAULT_LARGE_OBJECT_CHUNK_SIZE,
-               help=_('The amount of data written to a temporary '
-                      'disk buffer during the process of chunking '
-                      'the image file.')),
+               default=DEFAULT_LARGE_OBJECT_CHUNK_SIZE, min=1,
+               help=_("""
+The maximum size, in MB, of the segments when image data is segmented.
+
+When image data is segmented to upload images that are larger than the limit
+enforced by the Swift cluster, image data is broken into segments that are no
+bigger than the size specified by this configuration option.
+Refer to ``swift_store_large_object_size`` for more detail.
+
+For example: if ``swift_store_large_object_size`` is 5GB and
+``swift_store_large_object_chunk_size`` is 1GB, an image of size 6.2GB will be
+segmented into 7 segments where the first six segments will be 1GB in size and
+the seventh segment will be 0.2GB.
+
+Possible values:
+    * A positive integer that is less than or equal to the large object limit
+      enforced by Swift cluster in consideration.
+
+Related options:
+    * ``swift_store_large_object_size``
+
+""")),
     cfg.BoolOpt('swift_store_create_container_on_put', default=False,
-                help=_('A boolean value that determines if we create the '
-                       'container if it does not exist.')),
+                help=_("""
+Create container, if it doesn't already exist, when uploading image.
+
+At the time of uploading an image, if the corresponding container doesn't
+exist, it will be created provided this configuration option is set to True.
+By default, it won't be created. This behavior is applicable for both single
+and multiple containers mode.
+
+Possible values:
+    * True
+    * False
+
+Related options:
+    * None
+
+""")),
     cfg.BoolOpt('swift_store_multi_tenant', default=False,
-                help=_('If set to True, enables multi-tenant storage '
-                       'mode which causes Glance images to be stored in '
-                       'tenant specific Swift accounts.')),
+                help=_("""
+Store images in tenant's Swift account.
+
+This enables multi-tenant storage mode which causes Glance images to be stored
+in tenant specific Swift accounts. If this is disabled, Glance stores all
+images in its own account. More details multi-tenant store can be found at
+https://wiki.openstack.org/wiki/GlanceSwiftTenantSpecificStorage
+
+Possible values:
+    * True
+    * False
+
+Related options:
+    * None
+
+""")),
     cfg.IntOpt('swift_store_multiple_containers_seed',
-               default=0,
-               help=_('When set to 0, a single-tenant store will only use one '
-                      'container to store all images. When set to an integer '
-                      'value between 1 and 32, a single-tenant store will use '
-                      'multiple containers to store images, and this value '
-                      'will determine how many containers are created.'
-                      'Used only when swift_store_multi_tenant is disabled. '
-                      'The total number of containers that will be used is '
-                      'equal to 16^N, so if this config option is set to 2, '
-                      'then 16^2=256 containers will be used to store images.'
-                      )),
+               default=0, min=0, max=32,
+               help=_("""
+Seed indicating the number of containers to use for storing images.
+
+When using a single-tenant store, images can be stored in one or more than one
+containers. When set to 0, all images will be stored in one single container.
+When set to an integer value between 1 and 32, multiple containers will be
+used to store images. This configuration option will determine how many
+containers are created. The total number of containers that will be used is
+equal to 16^N, so if this config option is set to 2, then 16^2=256 containers
+will be used to store images.
+
+Please refer to ``swift_store_container`` for more detail on the naming
+convention. More detail about using multiple containers can be found at
+https://specs.openstack.org/openstack/glance-specs/specs/kilo/swift-store-multiple-containers.html
+
+NOTE: This is used only when swift_store_multi_tenant is disabled.
+
+Possible values:
+    * A non-negative integer less than or equal to 32
+
+Related options:
+    * ``swift_store_container``
+    * ``swift_store_multi_tenant``
+    * ``swift_store_create_container_on_put``
+
+""")),
     cfg.ListOpt('swift_store_admin_tenants', default=[],
-                help=_('A list of tenants that will be granted read/write '
-                       'access on all Swift containers created by Glance in '
-                       'multi-tenant mode.')),
-    cfg.BoolOpt('swift_store_ssl_compression', default=True,
-                help=_('If set to False, disables SSL layer compression of '
-                       'https swift requests. Setting to False may improve '
-                       'performance for images which are already in a '
-                       'compressed format, eg qcow2.')),
-    cfg.IntOpt('swift_store_retry_get_count', default=0,
-               help=_('The number of times a Swift download will be retried '
-                      'before the request fails.')),
-    cfg.IntOpt('swift_store_expire_soon_interval', default=60,
-               help=_('The period of time (in seconds) before token expiration'
-                      'when glance_store will try to reques new user token. '
-                      'Default value 60 sec means that if token is going to '
-                      'expire in 1 min then glance_store request new user '
-                      'token.')),
-    cfg.BoolOpt('swift_store_use_trusts', default=True,
-                help=_('If set to True create a trust for each add/get '
-                       'request to Multi-tenant store in order to prevent '
-                       'authentication token to be expired during '
-                       'uploading/downloading data. If set to False then user '
-                       'token is used for Swift connection (so no overhead on '
-                       'trust creation). Please note that this '
-                       'option is considered only and only if '
-                       'swift_store_multi_tenant=True'))
+                help=_("""
+List of tenants that will be granted admin access.
+
+This is a list of tenants that will be granted read/write access on
+all Swift containers created by Glance in multi-tenant mode. The
+default value is an empty list.
+
+Possible values:
+    * A comma separated list of strings representing UUIDs of Keystone
+      projects/tenants
+
+Related options:
+    * None
+
+""")),
+    cfg.BoolOpt('swift_store_ssl_compression',
+                default=True,
+                help=_("""
+SSL layer compression for HTTPS Swift requests.
+
+Provide a boolean value to determine whether or not to compress
+HTTPS Swift requests for images at the SSL layer. By default,
+compression is enabled.
+
+When using Swift as the backend store for Glance image storage,
+SSL layer compression of HTTPS Swift requests can be set using
+this option. If set to False, SSL layer compression of HTTPS
+Swift requests is disabled. Disabling this option may improve
+performance for images which are already in a compressed format,
+for example, qcow2.
+
+Possible values:
+    * True
+    * False
+
+Related Options:
+    * None
+
+""")),
+    cfg.IntOpt('swift_store_retry_get_count',
+               default=0,
+               min=0,
+               help=_("""
+The number of times a Swift download will be retried before the
+request fails.
+
+Provide an integer value representing the number of times an image
+download must be retried before erroring out. The default value is
+zero (no retry on a failed image download). When set to a positive
+integer value, ``swift_store_retry_get_count`` ensures that the
+download is attempted this many more times upon a download failure
+before sending an error message.
+
+Possible values:
+    * Zero
+    * Positive integer value
+
+Related Options:
+    * None
+
+""")),
+    cfg.IntOpt('swift_store_expire_soon_interval',
+               min=0,
+               default=60,
+               help=_("""
+Time in seconds defining the size of the window in which a new
+token may be requested before the current token is due to expire.
+
+Typically, the Swift storage driver fetches a new token upon the
+expiration of the current token to ensure continued access to
+Swift. However, some Swift transactions (like uploading image
+segments) may not recover well if the token expires on the fly.
+
+Hence, by fetching a new token before the current token expiration,
+we make sure that the token does not expire or is close to expiry
+before a transaction is attempted. By default, the Swift storage
+driver requests for a new token 60 seconds or less before the
+current token expiration.
+
+Possible values:
+    * Zero
+    * Positive integer value
+
+Related Options:
+    * None
+
+""")),
+    cfg.BoolOpt('swift_store_use_trusts',
+                default=True,
+                help=_("""
+Use trusts for multi-tenant Swift store.
+
+This option instructs the Swift store to create a trust for each
+add/get request when the multi-tenant store is in use. Using trusts
+allows the Swift store to avoid problems that can be caused by an
+authentication token expiring during the upload or download of data.
+
+By default, ``swift_store_use_trusts`` is set to ``True``(use of
+trusts is enabled). If set to ``False``, a user token is used for
+the Swift connection instead, eliminating the overhead of trust
+creation.
+
+NOTE: This option is considered only when
+``swift_store_multi_tenant`` is set to ``True``
+
+Possible values:
+    * True
+    * False
+
+Related options:
+    * swift_store_multi_tenant
+
+"""))
 ]
 
 
@@ -175,16 +479,16 @@ def swift_retry_iter(resp_iter, length, store, location, manager):
         if bytes_read != length:
             if retries == store.conf.glance_store.swift_store_retry_get_count:
                 # terminate silently and let higher level decide
-                LOG.error(_("Stopping Swift retries after %d "
-                            "attempts") % retries)
+                LOG.error(_LE("Stopping Swift retries after %d "
+                              "attempts") % retries)
                 break
             else:
                 retries += 1
                 glance_conf = store.conf.glance_store
                 retry_count = glance_conf.swift_store_retry_get_count
-                LOG.info(_("Retrying Swift connection "
-                           "(%(retries)d/%(max_retries)d) with "
-                           "range=%(start)d-%(end)d") %
+                LOG.info(_LI("Retrying Swift connection "
+                             "(%(retries)d/%(max_retries)d) with "
+                             "range=%(start)d-%(end)d"),
                          {'retries': retries,
                           'max_retries': retry_count,
                           'start': bytes_read,
@@ -595,9 +899,9 @@ class BaseStore(driver.Store):
                         except Exception:
                             # Delete orphaned segments from swift backend
                             with excutils.save_and_reraise_exception():
-                                LOG.exception(_("Error during chunked upload "
-                                                "to backend, deleting stale "
-                                                "chunks"))
+                                reason = _LE("Error during chunked upload to "
+                                             "backend, deleting stale chunks")
+                                LOG.exception(reason)
                                 self._delete_stale_chunks(
                                     manager.get_connection(),
                                     location.container,
@@ -1057,7 +1361,8 @@ class MultiTenantStore(BaseStore):
         default_ref = self.conf.glance_store.default_swift_reference
         default_swift_reference = ref_params.get(default_ref)
         if not default_swift_reference:
-            reason = _("default_swift_reference %s is required.") % default_ref
+            reason = _("default_swift_reference %s is "
+                       "required."), default_ref
             LOG.error(reason)
             raise exceptions.BadStoreConfiguration(message=reason)
 
