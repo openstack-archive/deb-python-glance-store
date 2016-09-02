@@ -7,6 +7,7 @@ python-glance-store (0.18.0-1) UNRELEASED; urgency=medium
 
   [ Corey Bryant ]
   * New upstream release.
+  * .gitreview: Copy from orig tar ball.
 
  -- Corey Bryant <corey.bryant@canonical.com>  Fri, 02 Sep 2016 13:08:17 -0400
 
