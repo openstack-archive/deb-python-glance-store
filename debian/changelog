@@ -11,6 +11,7 @@ python-glance-store (0.18.0-1) UNRELEASED; urgency=medium
   * d/gbp.conf: Update debian-branch for Newton.
   * d/control: Align (Build-)Depends with upstream.
   * d/p/drop-git-sphinx.patch: Rebased.
+  * glance_store/tests/unit/test_swift_store.py: Copied from orig tarball.
 
  -- Corey Bryant <corey.bryant@canonical.com>  Fri, 02 Sep 2016 13:08:17 -0400
 
