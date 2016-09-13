@@ -1,0 +1,10 @@
+Code-Review+2: Mike Fedosin <mfedosin@mirantis.com>
+Code-Review+1: Ian Cordasco <ian.cordasco@rackspace.com>
+Code-Review+2: Erno Kuvaja <jokke@usr.fi>
+Workflow+1: Erno Kuvaja <jokke@usr.fi>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Mon, 23 May 2016 23:42:25 +0000
+Reviewed-on: https://review.openstack.org/316465
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/stable/mitaka
