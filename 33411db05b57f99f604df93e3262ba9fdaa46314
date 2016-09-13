@@ -1,0 +1,9 @@
+Code-Review+2: Kairat Kushaev <kkushaev@mirantis.com>
+Code-Review+2: Nikhil Komawar <nik.komawar@gmail.com>
+Workflow+1: Nikhil Komawar <nik.komawar@gmail.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Tue, 06 Sep 2016 19:39:25 +0000
+Reviewed-on: https://review.openstack.org/364210
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/master
