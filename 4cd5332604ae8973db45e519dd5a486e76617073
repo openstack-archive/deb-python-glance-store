@@ -1,0 +1,9 @@
+Code-Review+1: Ian Cordasco <ian.cordasco@rackspace.com>
+Code-Review+2: Nikhil Komawar <nik.komawar@gmail.com>
+Workflow+1: Nikhil Komawar <nik.komawar@gmail.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Fri, 27 May 2016 21:59:07 +0000
+Reviewed-on: https://review.openstack.org/321447
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/stable/liberty
