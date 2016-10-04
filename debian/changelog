@@ -6,7 +6,8 @@ python-glance-store (0.18.0-2) unstable; urgency=medium
 
   [ Thomas Goirand ]
   * Uploading to unstable.
-  * Add missing python3 (>= 3.5) | python3-enum34 build-depends-indep.
+  * Add missing python3 (>= 3.5) | python3-enum34 build-depends-indep
+    (Closes: #839342).
 
  -- Thomas Goirand <zigo@debian.org>  Mon, 26 Sep 2016 22:51:29 +0200
 
