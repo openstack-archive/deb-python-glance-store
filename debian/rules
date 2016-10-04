@@ -18,7 +18,7 @@ override_dh_python3:
 
 override_dh_auto_test:
 ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
-	pkgos-dh_auto_test
+	pkgos-dh_auto_test 'glance_store\.tests\.unit\.(?!.*test_opts\.OptsTestCase\.test_list_api_opts.*)'
 endif
 
 override_dh_clean:
