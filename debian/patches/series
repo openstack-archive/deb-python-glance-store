@@ -1,1 +1,2 @@
 drop-git-sphinx.patch
+Do_not_require_entry-point_dependencies_in_tests.patch

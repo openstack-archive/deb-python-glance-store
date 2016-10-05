@@ -1,0 +1,48 @@
+Description: Do not require entry-point dependencies in tests
+Author: Ian Cordasco <graffatcolmingov@gmail.com>
+Date: Wed, 5 Oct 2016 13:19:36 +0000 (-0500)
+X-Git-Url: https://review.openstack.org/gitweb?p=openstack%2Fglance_store.git;a=commitdiff_plain;h=6903ae45e756f0a2e65f811d6b8b7ad045a78800
+ In our tests, we load our entry-points using plain pkg_resources and in
+ doing so were requiring our dependencies to be checked for each plugin.
+ This was causing test errors on Python 3.5 running on some environments.
+ .
+ By using logic to load the entry-points as modern versions of setuptools
+ expect us to and defaulting requirement verification to False, we should
+ avoid these testing errors.
+Change-Id: Id58861f72d399758178e0f11f617d2f178eddc4a
+Closes-bug: #1630392
+Origin: upstream, https://review.openstack.org/382406
+Last-Update: 2016-10-05
+
+diff --git a/glance_store/tests/unit/test_opts.py b/glance_store/tests/unit/test_opts.py
+index 2d85a05..ef73c4b 100644
+--- a/glance_store/tests/unit/test_opts.py
++++ b/glance_store/tests/unit/test_opts.py
+@@ -20,6 +20,18 @@ from glance_store import backend
+ from glance_store.tests import base
+ 
+ 
++def load_entry_point(entry_point, verify_requirements=False):
++    """Load an entry-point without requiring dependencies."""
++    resolve = getattr(entry_point, 'resolve', None)
++    require = getattr(entry_point, 'require', None)
++    if resolve is not None and require is not None:
++        if verify_requirements:
++            entry_point.require()
++        return entry_point.resolve()
++    else:
++        return entry_point.load(require=verify_requirements)
++
++
+ class OptsTestCase(base.StoreBaseTest):
+ 
+     def _check_opt_groups(self, opt_list, expected_opt_groups):
+@@ -43,7 +55,7 @@ class OptsTestCase(base.StoreBaseTest):
+         opt_list = None
+         for ep in pkg_resources.iter_entry_points('oslo.config.opts'):
+             if ep.name == namespace:
+-                list_fn = ep.load()
++                list_fn = load_entry_point(ep)
+                 opt_list = list_fn()
+                 break
+ 
