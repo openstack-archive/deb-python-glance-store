@@ -1,0 +1,8 @@
+Code-Review+2: Erno Kuvaja <jokke@usr.fi>
+Workflow+1: Erno Kuvaja <jokke@usr.fi>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Fri, 07 Oct 2016 11:56:56 +0000
+Reviewed-on: https://review.openstack.org/383214
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/master
