@@ -93,7 +93,7 @@ Description: OpenStack Image Service store library - common files
 Package: python-glance-store
 Architecture: all
 Depends: python-debtcollector,
-         python3 (>= 3.5) | python-enum34,
+         python-enum34,
          python-eventlet (>= 0.18.2),
          python-jsonschema (>= 2.0.0),
          python-keystoneclient (>= 1:2.0.0),
@@ -119,6 +119,7 @@ Description: OpenStack Image Service store library - Python 2.7
 Package: python3-glance-store
 Architecture: all
 Depends: python3-debtcollector,
+         python3 (>= 3.5) | python-enum34,
          python3-eventlet (>= 0.18.2),
          python3-jsonschema (>= 2.0.0),
          python3-keystoneclient (>= 1:2.0.0),

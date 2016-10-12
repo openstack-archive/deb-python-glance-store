@@ -1,3 +1,9 @@
+python-glance-store (0.18.0-3) unstable; urgency=medium
+
+  * Fixed enum34 runtime depends.
+
+ -- Thomas Goirand <zigo@debian.org>  Wed, 12 Oct 2016 14:20:19 +0200
+
 python-glance-store (0.18.0-2) unstable; urgency=medium
 
   [ Ondřej Nový ]
