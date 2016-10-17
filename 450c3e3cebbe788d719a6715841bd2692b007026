@@ -1,0 +1,9 @@
+Code-Review+2: Hemanth Makkapati <hemanth.makkapati@rackspace.com>
+Code-Review+2: Mike Fedosin <mfedosin@gmail.com>
+Workflow+1: Mike Fedosin <mfedosin@gmail.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Sun, 16 Oct 2016 11:42:33 +0000
+Reviewed-on: https://review.openstack.org/383745
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/master
