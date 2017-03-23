@@ -1,0 +1,10 @@
+Code-Review+1: Alexander Bashmakov <alexander.bashmakov@intel.com>
+Code-Review+2: Hemanth Makkapati <hemanth.makkapati@rackspace.com>
+Code-Review+2: Steve Lewis (stevelle) <steve.lewis@rackspace.com>
+Workflow+1: Steve Lewis (stevelle) <steve.lewis@rackspace.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Wed, 15 Mar 2017 15:56:52 +0000
+Reviewed-on: https://review.openstack.org/439876
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/master
