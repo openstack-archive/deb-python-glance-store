@@ -1,0 +1,9 @@
+Code-Review+2: Hemanth Makkapati <makstacker+osgerrit@gmail.com>
+Code-Review+2: Brian Rosmaita <brian.rosmaita@rackspace.com>
+Workflow+1: Brian Rosmaita <brian.rosmaita@rackspace.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Tue, 28 Mar 2017 18:08:17 +0000
+Reviewed-on: https://review.openstack.org/447943
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/master
