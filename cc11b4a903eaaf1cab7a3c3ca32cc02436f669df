@@ -1,0 +1,8 @@
+Code-Review+2: Brian Rosmaita <rosmaita.fossdev@gmail.com>
+Workflow+1: Brian Rosmaita <rosmaita.fossdev@gmail.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Fri, 21 Apr 2017 16:41:29 +0000
+Reviewed-on: https://review.openstack.org/458826
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/master
