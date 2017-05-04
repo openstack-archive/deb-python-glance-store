@@ -1,0 +1,10 @@
+Code-Review+2: Feilong Wang <flwang@catalyst.net.nz>
+Code-Review+1: Daniel Pawlik <daniel.pawlik@corp.ovh.com>
+Code-Review+2: Brian Rosmaita <rosmaita.fossdev@gmail.com>
+Workflow+1: Brian Rosmaita <rosmaita.fossdev@gmail.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Thu, 04 May 2017 19:38:47 +0000
+Reviewed-on: https://review.openstack.org/459640
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/master
