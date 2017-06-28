@@ -1,0 +1,8 @@
+Code-Review+2: Flavio Percoco <fpercoco@redhat.com>
+Workflow+1: Flavio Percoco <fpercoco@redhat.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Wed, 28 Jun 2017 20:09:06 +0000
+Reviewed-on: https://review.openstack.org/478296
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/master
