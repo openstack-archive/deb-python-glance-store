@@ -1,0 +1,10 @@
+Code-Review+2: Abhishek Kekane <abhishek.kekane@nttdata.com>
+Code-Review+1: Kairat Kushaev <kkushaev@mirantis.com>
+Code-Review+2: Erno Kuvaja <jokke@usr.fi>
+Workflow+1: Erno Kuvaja <jokke@usr.fi>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Wed, 19 Jul 2017 14:28:18 +0000
+Reviewed-on: https://review.openstack.org/485018
+Project: openstack/deb-python-glance-store
+Branch: refs/heads/master
